@@ -24,25 +24,10 @@ jobs:
           from pathlib import Path
           import base64
           raw = base64.b64decode(Path('brand/icon-flat.png.b64').read_text(encoding='utf-8').strip())
-          Path('/tmp/wuai-icon-source.png').write_bytes(raw)
+          Path('WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-1024.png').write_bytes(raw)
+          Path('WuAiZhiBo/Assets.xcassets/BrandLogo.imageset/BrandLogo.png').write_bytes(raw)
           PY
-
-          mkdir -p WuAiZhiBo/Assets.xcassets/AppIcon.appiconset
-          mkdir -p WuAiZhiBo/Assets.xcassets/BrandLogo.imageset
-
-          sips -s format png -z 1024 1024 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-1024.png >/dev/null
-          sips -s format png -z 40 40 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-40.png >/dev/null
-          sips -s format png -z 60 60 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-60.png >/dev/null
-          sips -s format png -z 58 58 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-58.png >/dev/null
-          sips -s format png -z 87 87 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-87.png >/dev/null
-          sips -s format png -z 80 80 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-80.png >/dev/null
-          sips -s format png -z 120 120 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-120.png >/dev/null
-          cp WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-120.png WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-120-60.png
-          sips -s format png -z 180 180 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-180.png >/dev/null
-
-          sips -s format png -z 256 256 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/BrandLogo.imageset/BrandLogo-256.png >/dev/null
-          sips -s format png -z 512 512 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/BrandLogo.imageset/BrandLogo-512.png >/dev/null
-          sips -s format png -z 768 768 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/BrandLogo.imageset/BrandLogo-768.png >/dev/null
+          file WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-1024.png
 
       - name: Build unsigned device app
         shell: bash
