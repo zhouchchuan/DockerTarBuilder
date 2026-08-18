@@ -1,0 +1,5 @@
+-dontwarn com.tencent.smtt.**
+-dontwarn com.tencent.tbs.**
+-keep class com.tencent.smtt.** { *; }
+-keep class com.tencent.tbs.** { *; }
+-keep class MTT.** { *; }
