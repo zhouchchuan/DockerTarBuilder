@@ -1,0 +1,72 @@
+name: Build WuAiZhiBo X5 v1.2 PR Base
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, reopened, synchronize]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;36.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+
+      - name: Restore brand assets
+        shell: bash
+        run: |
+          cd wuaizhibo-x5-v1.2
+          mkdir -p app/src/main/res/drawable-nodpi
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+          p = Path('../.github/workflows/build-wuaizhibo-x5.yml')
+          s = p.read_text(encoding='utf-8')
+          def extract(marker):
+              a = s.index(marker) + len(marker)
+              b = s.index('\nEOF', a)
+              return ''.join(s[a:b].split())
+          Path('app/src/main/res/drawable-nodpi/splash_brand.jpg').write_bytes(base64.b64decode(extract("cat > /tmp/splash.b64 <<'EOF'\n")))
+          Path('app/src/main/res/drawable-nodpi/app_icon.jpg').write_bytes(base64.b64decode(extract("cat > /tmp/icon.b64 <<'EOF'\n")))
+          print('brand assets restored')
+          PY
+
+      - name: Build release APK
+        shell: bash
+        run: |
+          cd wuaizhibo-x5-v1.2
+          gradle --no-daemon :app:assembleRelease --stacktrace
+
+      - name: Package unsigned APK and signing tools
+        shell: bash
+        run: |
+          mkdir -p out/apksigner-lib
+          cp wuaizhibo-x5-v1.2/app/build/outputs/apk/release/app-release-unsigned.apk out/WuAiZhiBo-v1.2-X5-unsigned.apk
+          cp "$ANDROID_HOME/build-tools/36.0.0/apksigner" out/apksigner
+          cp "$ANDROID_HOME/build-tools/36.0.0/lib/apksigner.jar" out/apksigner-lib/apksigner.jar
+          chmod +x out/apksigner
+          sha256sum out/WuAiZhiBo-v1.2-X5-unsigned.apk > out/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wuaizhibo-x5-v1.2-build
+          path: out/
+          if-no-files-found: error
