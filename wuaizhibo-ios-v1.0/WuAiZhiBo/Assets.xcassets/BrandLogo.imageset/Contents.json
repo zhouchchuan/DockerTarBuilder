@@ -1,8 +1,13 @@
 {
   "images" : [
-    { "idiom" : "universal", "scale" : "1x", "filename" : "BrandLogo-256.png" },
-    { "idiom" : "universal", "scale" : "2x", "filename" : "BrandLogo-512.png" },
-    { "idiom" : "universal", "scale" : "3x", "filename" : "BrandLogo-768.png" }
+    {
+      "filename" : "BrandLogo.png",
+      "idiom" : "universal",
+      "scale" : "1x"
+    }
   ],
-  "info" : { "author" : "xcode", "version" : 1 }
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
 }
