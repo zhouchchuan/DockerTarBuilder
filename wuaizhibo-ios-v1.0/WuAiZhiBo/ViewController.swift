@@ -291,6 +291,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         var s=d.getElementById('wuaizhibo-ios-fix');
         if(!s){s=d.createElement('style');s.id='wuaizhibo-ios-fix';d.head.appendChild(s);}
         s.textContent='html{-webkit-text-size-adjust:100% !important;text-size-adjust:100% !important;}'+
+        'input,textarea,select{font-size:16px !important;}'+
         'html.wuai-portrait-page,body.wuai-portrait-page{margin:0 !important;padding:0 !important;width:100% !important;height:100% !important;overflow:hidden !important;background:#000 !important;overscroll-behavior:none !important;}'+
         '.madouym.wuai-portrait-player{position:fixed !important;inset:0 !important;width:100vw !important;height:100vh !important;height:100dvh !important;max-width:none !important;max-height:none !important;margin:0 !important;padding:0 !important;z-index:2147483646 !important;background:#000 !important;overflow:hidden !important;}'+
         '.madouym.wuai-portrait-player iframe,.madouym.wuai-portrait-player video,.madouym.wuai-portrait-player>iframe,.madouym.wuai-portrait-player>video{width:100% !important;height:100% !important;max-width:none !important;max-height:none !important;margin:0 !important;padding:0 !important;}'+
