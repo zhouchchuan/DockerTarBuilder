@@ -25,9 +25,9 @@ jobs:
           cd /tmp/zsign/build/linux
           make clean
           make -j2
-          ./zsign -v || true
+          /tmp/zsign/bin/zsign -v || true
           mkdir -p "$GITHUB_WORKSPACE/out"
-          cp zsign "$GITHUB_WORKSPACE/out/zsign-linux"
+          cp /tmp/zsign/bin/zsign "$GITHUB_WORKSPACE/out/zsign-linux"
           chmod +x "$GITHUB_WORKSPACE/out/zsign-linux"
           sha256sum "$GITHUB_WORKSPACE/out/zsign-linux" > "$GITHUB_WORKSPACE/out/zsign-linux-SHA256.txt"
 
