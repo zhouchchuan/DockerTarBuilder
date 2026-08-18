@@ -68,6 +68,10 @@ public class MainActivity extends Activity {
         getWindow().setNavigationBarColor(Color.rgb(6, 20, 46));
         createShell();
 
+        // v1.2.2: the whole app stays immersive, not only the video player.
+        enterImmersive();
+        scheduleImmersiveRefresh();
+
         SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
         if (sp.getBoolean(PREF_PRIVACY, false)) {
             initX5();
@@ -79,9 +83,12 @@ public class MainActivity extends Activity {
                     .setNegativeButton("退出", (d, w) -> finish())
                     .setPositiveButton("同意并进入", (d, w) -> {
                         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_PRIVACY, true).apply();
+                        enterImmersive();
+                        scheduleImmersiveRefresh();
                         initX5();
                     })
                     .show();
+            scheduleImmersiveRefresh();
         }
     }
 
@@ -124,6 +131,7 @@ public class MainActivity extends Activity {
         webView.setBackgroundColor(Color.rgb(6, 20, 46));
         root.addView(webView, 0, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         configureWebView();
+        enterImmersive();
         webView.loadUrl(HOME_URL);
     }
 
@@ -164,12 +172,14 @@ public class MainActivity extends Activity {
                 if (!isTrustedUrl(url) && serverLandscapeMode) {
                     handleServerFullscreenMode("off");
                 }
+                enterImmersive();
             }
 
             @Override public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 applyMobileFix(view);
                 hideSplash();
+                scheduleImmersiveRefresh();
             }
 
             @Override public boolean shouldOverrideUrlLoading(WebView view, String url) {
@@ -183,6 +193,7 @@ public class MainActivity extends Activity {
             @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
                 if (handler != null) handler.cancel();
                 hideSplash();
+                enterImmersive();
                 Toast.makeText(MainActivity.this, "网站 HTTPS 证书校验失败", Toast.LENGTH_LONG).show();
             }
         });
@@ -193,6 +204,7 @@ public class MainActivity extends Activity {
                 if (progress >= 100) {
                     applyMobileFix(view);
                     hideSplash();
+                    scheduleImmersiveRefresh();
                 }
             }
 
@@ -231,6 +243,7 @@ public class MainActivity extends Activity {
                     return true;
                 } catch (ActivityNotFoundException e) {
                     fileCallback = null;
+                    enterImmersive();
                     return false;
                 }
             }
@@ -275,8 +288,11 @@ public class MainActivity extends Activity {
             if (wasLandscape && customView == null) {
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-                restoreSystemBars();
             }
+            // v1.2.2: leaving video fullscreen returns to APP immersive mode,
+            // never restores the Android status/navigation bars.
+            enterImmersive();
+            scheduleImmersiveRefresh();
         }
     }
 
@@ -327,6 +343,7 @@ public class MainActivity extends Activity {
             return true;
         } catch (Exception e) {
             Toast.makeText(this, "未安装可打开此链接的应用", Toast.LENGTH_SHORT).show();
+            enterImmersive();
             return true;
         }
     }
@@ -340,24 +357,22 @@ public class MainActivity extends Activity {
                 splash.setVisibility(View.GONE);
                 splash.setAlpha(1f);
                 splash.setClickable(false);
+                enterImmersive();
+                scheduleImmersiveRefresh();
             }).start();
         }, delay);
     }
 
-    private boolean isFullscreenActive() {
-        return customView != null || serverLandscapeMode;
-    }
-
     private void scheduleImmersiveRefresh() {
         ui.postDelayed(() -> {
-            if (isFullscreenActive()) enterImmersive();
-        }, 80L);
+            if (!isFinishing()) enterImmersive();
+        }, 60L);
         ui.postDelayed(() -> {
-            if (isFullscreenActive()) enterImmersive();
-        }, 320L);
+            if (!isFinishing()) enterImmersive();
+        }, 240L);
         ui.postDelayed(() -> {
-            if (isFullscreenActive()) enterImmersive();
-        }, 800L);
+            if (!isFinishing()) enterImmersive();
+        }, 700L);
     }
 
     private void enterImmersive() {
@@ -392,28 +407,6 @@ public class MainActivity extends Activity {
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }
 
-    private void restoreSystemBars() {
-        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            WindowManager.LayoutParams lp = getWindow().getAttributes();
-            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
-            getWindow().setAttributes(lp);
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            getWindow().setDecorFitsSystemWindows(true);
-            WindowInsetsController controller = getWindow().getInsetsController();
-            if (controller != null) {
-                controller.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-            }
-        }
-
-        getWindow().setStatusBarColor(Color.rgb(6, 20, 46));
-        getWindow().setNavigationBarColor(Color.rgb(6, 20, 46));
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
-    }
-
     private void exitFullscreen() {
         if (customView == null) return;
         root.removeView(customView);
@@ -427,13 +420,14 @@ public class MainActivity extends Activity {
         if (serverLandscapeMode) {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-            enterImmersive();
-            scheduleImmersiveRefresh();
         } else {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-            restoreSystemBars();
         }
+
+        // Never show Android system bars after closing a video.
+        enterImmersive();
+        scheduleImmersiveRefresh();
     }
 
     @Override public void onBackPressed() {
@@ -446,6 +440,7 @@ public class MainActivity extends Activity {
             handleServerFullscreenMode("off");
         } else if (webView != null && webView.canGoBack()) {
             webView.goBack();
+            scheduleImmersiveRefresh();
         } else {
             super.onBackPressed();
         }
@@ -453,12 +448,12 @@ public class MainActivity extends Activity {
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus && isFullscreenActive()) scheduleImmersiveRefresh();
+        if (hasFocus) scheduleImmersiveRefresh();
     }
 
     @Override public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        if (isFullscreenActive()) scheduleImmersiveRefresh();
+        scheduleImmersiveRefresh();
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -469,6 +464,7 @@ public class MainActivity extends Activity {
             fileCallback.onReceiveValue(result);
             fileCallback = null;
         }
+        scheduleImmersiveRefresh();
     }
 
     @Override protected void onPause() {
@@ -482,7 +478,8 @@ public class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         if (webView != null) webView.onResume();
-        if (isFullscreenActive()) scheduleImmersiveRefresh();
+        enterImmersive();
+        scheduleImmersiveRefresh();
     }
 
     @Override protected void onDestroy() {
