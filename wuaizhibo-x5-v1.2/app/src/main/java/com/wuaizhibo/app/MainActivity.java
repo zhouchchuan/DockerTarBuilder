@@ -6,15 +6,20 @@ import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.Toast;
@@ -37,6 +42,7 @@ import java.util.Map;
 
 public class MainActivity extends Activity {
     private static final String HOME_URL = "https://jiami.ttplays.uk:6067/";
+    private static final String TRUSTED_HOST = "jiami.ttplays.uk";
     private static final int FILE_CHOOSER_REQUEST = 12001;
     private static final long MIN_SPLASH_MS = 900L;
     private static final String PREFS = "wuaizhibo_settings";
@@ -52,6 +58,7 @@ public class MainActivity extends Activity {
     private long splashStart;
     private boolean webCreated;
     private boolean initCallback;
+    private boolean serverLandscapeMode;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -145,6 +152,8 @@ public class MainActivity extends Activity {
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setMixedContentMode(0);
 
+        webView.addJavascriptInterface(new NativeBridge(), "WuAiNative");
+
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(webView, true);
@@ -152,6 +161,9 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
+                if (!isTrustedUrl(url) && serverLandscapeMode) {
+                    handleServerFullscreenMode("off");
+                }
             }
 
             @Override public void onPageFinished(WebView view, String url) {
@@ -194,8 +206,9 @@ public class MainActivity extends Activity {
                 webView.setVisibility(View.GONE);
                 root.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
                 enterImmersive();
+                applyNativeFullscreenOrientation();
+                scheduleImmersiveRefresh();
             }
 
             @Override public void onHideCustomView() {
@@ -232,8 +245,71 @@ public class MainActivity extends Activity {
 
     private void applyMobileFix(WebView view) {
         if (view == null) return;
-        String js = "(function(){try{var d=document;if(!d||!d.head)return;var v=d.querySelector('meta[name=\\\"viewport\\\"]');if(!v){v=d.createElement('meta');v.name='viewport';d.head.appendChild(v);}v.setAttribute('content','width=device-width, initial-scale=1.0, viewport-fit=cover');var s=d.getElementById('wuaizhibo-mobile-fix');if(!s){s=d.createElement('style');s.id='wuaizhibo-mobile-fix';d.head.appendChild(s);}s.textContent='html{-webkit-text-size-adjust:100% !important;text-size-adjust:100% !important;}';}catch(e){}})();";
+        String js = "(function(){try{var d=document;if(!d||!d.head)return;var v=d.querySelector('meta[name=\\\"viewport\\\"]');if(!v){v=d.createElement('meta');v.name='viewport';d.head.appendChild(v);}v.setAttribute('content','width=device-width, initial-scale=1.0, viewport-fit=cover');var s=d.getElementById('wuaizhibo-mobile-fix');if(!s){s=d.createElement('style');s.id='wuaizhibo-mobile-fix';d.head.appendChild(s);}s.textContent='html{-webkit-text-size-adjust:100% !important;text-size-adjust:100% !important;}';if(!window.__wuaifsBridgeInstalled){window.__wuaifsBridgeInstalled=true;var sync=function(){try{var de=d.documentElement,b=d.body;var on=!!((de&&de.classList.contains('force-landscape-page'))||(b&&b.classList.contains('force-landscape-page'))||d.querySelector('.madouym.force-landscape-player'));if(window.WuAiNative&&typeof window.WuAiNative.setFullscreenMode==='function'){window.WuAiNative.setFullscreenMode(on?'landscape':'off');}}catch(x){}};var mo=new MutationObserver(sync);mo.observe(d.documentElement,{attributes:true,subtree:true,attributeFilter:['class']});d.addEventListener('fullscreenchange',sync,true);window.addEventListener('pageshow',sync,true);window.addEventListener('pagehide',function(){try{if(window.WuAiNative&&typeof window.WuAiNative.setFullscreenMode==='function')window.WuAiNative.setFullscreenMode('off');}catch(x){}},true);sync();}}catch(e){}})();";
         view.evaluateJavascript(js, null);
+    }
+
+    private final class NativeBridge {
+        @JavascriptInterface
+        public void setFullscreenMode(String mode) {
+            ui.post(() -> {
+                if (!isTrustedCurrentUrl()) return;
+                handleServerFullscreenMode(mode);
+            });
+        }
+    }
+
+    private void handleServerFullscreenMode(String mode) {
+        boolean landscape = "landscape".equalsIgnoreCase(mode);
+        if (landscape) {
+            serverLandscapeMode = true;
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            if (customView == null) {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+                enterImmersive();
+                scheduleImmersiveRefresh();
+            }
+        } else {
+            boolean wasLandscape = serverLandscapeMode;
+            serverLandscapeMode = false;
+            if (wasLandscape && customView == null) {
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+                restoreSystemBars();
+            }
+        }
+    }
+
+    private void applyNativeFullscreenOrientation() {
+        if (webView == null) {
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
+            return;
+        }
+        String js = "(function(){try{var ps=document.querySelectorAll('.madouym[data-video-orientation]');for(var i=0;i<ps.length;i++){var m=ps[i].getAttribute('data-video-orientation');if(m==='portrait'||m==='landscape')return m;}var v=document.querySelector('video');if(v&&v.videoWidth&&v.videoHeight)return v.videoHeight>v.videoWidth?'portrait':'landscape';return 'portrait';}catch(e){return 'portrait';}})();";
+        webView.evaluateJavascript(js, value -> {
+            if (customView == null) return;
+            String mode = value == null ? "portrait" : value.replace("\"", "").trim();
+            if ("landscape".equalsIgnoreCase(mode)) {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            } else {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
+            }
+            scheduleImmersiveRefresh();
+        });
+    }
+
+    private boolean isTrustedCurrentUrl() {
+        return webView != null && isTrustedUrl(webView.getUrl());
+    }
+
+    private boolean isTrustedUrl(String url) {
+        if (url == null) return false;
+        try {
+            Uri uri = Uri.parse(url);
+            return TRUSTED_HOST.equalsIgnoreCase(uri.getHost());
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private boolean openExternal(Uri uri) {
@@ -268,12 +344,74 @@ public class MainActivity extends Activity {
         }, delay);
     }
 
+    private boolean isFullscreenActive() {
+        return customView != null || serverLandscapeMode;
+    }
+
+    private void scheduleImmersiveRefresh() {
+        ui.postDelayed(() -> {
+            if (isFullscreenActive()) enterImmersive();
+        }, 80L);
+        ui.postDelayed(() -> {
+            if (isFullscreenActive()) enterImmersive();
+        }, 320L);
+        ui.postDelayed(() -> {
+            if (isFullscreenActive()) enterImmersive();
+        }, 800L);
+    }
+
     private void enterImmersive() {
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(lp);
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setStatusBarContrastEnforced(false);
+            getWindow().setNavigationBarContrastEnforced(false);
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(false);
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        }
+
         getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+                View.SYSTEM_UI_FLAG_FULLSCREEN |
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }
+
+    private void restoreSystemBars() {
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
+            getWindow().setAttributes(lp);
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(true);
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                controller.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+            }
+        }
+
+        getWindow().setStatusBarColor(Color.rgb(6, 20, 46));
+        getWindow().setNavigationBarColor(Color.rgb(6, 20, 46));
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
     }
 
     private void exitFullscreen() {
@@ -285,20 +423,42 @@ public class MainActivity extends Activity {
             customCallback.onCustomViewHidden();
             customCallback = null;
         }
-        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+
+        if (serverLandscapeMode) {
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            enterImmersive();
+            scheduleImmersiveRefresh();
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+            restoreSystemBars();
+        }
     }
 
     @Override public void onBackPressed() {
         if (customView != null) {
             exitFullscreen();
+        } else if (serverLandscapeMode) {
+            if (webView != null) {
+                webView.evaluateJavascript("(function(){try{var b=document.querySelector('.force-landscape-hitbox');if(b){b.click();return true;}document.documentElement.classList.remove('force-landscape-page');if(document.body)document.body.classList.remove('force-landscape-page');var p=document.querySelector('.madouym.force-landscape-player');if(p)p.classList.remove('force-landscape-player');return true;}catch(e){return false;}})();", null);
+            }
+            handleServerFullscreenMode("off");
         } else if (webView != null && webView.canGoBack()) {
             webView.goBack();
         } else {
             super.onBackPressed();
         }
+    }
+
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && isFullscreenActive()) scheduleImmersiveRefresh();
+    }
+
+    @Override public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (isFullscreenActive()) scheduleImmersiveRefresh();
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -322,12 +482,14 @@ public class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         if (webView != null) webView.onResume();
+        if (isFullscreenActive()) scheduleImmersiveRefresh();
     }
 
     @Override protected void onDestroy() {
         ui.removeCallbacksAndMessages(null);
         if (webView != null) {
             webView.stopLoading();
+            webView.removeJavascriptInterface("WuAiNative");
             webView.setWebChromeClient(null);
             webView.setWebViewClient(null);
             webView.removeAllViews();
