@@ -1,0 +1,88 @@
+name: Build WuAiZhiBo iOS v1.0.1
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, reopened, synchronize]
+
+jobs:
+  build:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Restore approved WuAiZhiBo logo
+        shell: bash
+        run: |
+          git fetch --depth=1 origin wuaizhibo-x5-v1.2-build:refs/remotes/origin/wuaizhibo-x5-v1.2-build
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess, base64
+          src = subprocess.check_output([
+              'git','show','origin/wuaizhibo-x5-v1.2-build:.github/workflows/build-wuaizhibo-x5.yml'
+          ], text=True)
+          marker = "cat > /tmp/icon.b64 <<'EOF'\n"
+          a = src.index(marker) + len(marker)
+          b = src.index('\nEOF', a)
+          raw = base64.b64decode(''.join(src[a:b].split()))
+          Path('/tmp/wuai-approved-icon.jpg').write_bytes(raw)
+          PY
+          cd wuaizhibo-ios-v1.0
+          mkdir -p WuAiZhiBo/Assets.xcassets/AppIcon.appiconset WuAiZhiBo/Assets.xcassets/BrandLogo.imageset
+          sips -s format png -z 1024 1024 /tmp/wuai-approved-icon.jpg --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-1024.png >/dev/null
+          cp WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-1024.png WuAiZhiBo/Assets.xcassets/BrandLogo.imageset/BrandLogo.png
+          file WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-1024.png
+
+      - name: Build unsigned device app
+        shell: bash
+        run: |
+          cd wuaizhibo-ios-v1.0
+          rm -rf build
+          xcodebuild \
+            -project WuAiZhiBo.xcodeproj \
+            -target WuAiZhiBo \
+            -configuration Release \
+            -sdk iphoneos \
+            CONFIGURATION_BUILD_DIR="$PWD/build/Release-iphoneos" \
+            MARKETING_VERSION=1.0.1 \
+            CURRENT_PROJECT_VERSION=2 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Static checks
+        shell: bash
+        run: |
+          cd wuaizhibo-ios-v1.0
+          APP_PATH="$PWD/build/Release-iphoneos/WuAiZhiBo.app"
+          test -d "$APP_PATH"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist"
+          grep -F "input,textarea,select{font-size:16px !important;}" WuAiZhiBo/ViewController.swift
+          grep -F 'image="BrandLogo"' WuAiZhiBo/LaunchScreen.storyboard
+
+      - name: Package unsigned IPA and source
+        shell: bash
+        run: |
+          cd wuaizhibo-ios-v1.0
+          APP_PATH="$PWD/build/Release-iphoneos/WuAiZhiBo.app"
+          rm -rf "$RUNNER_TEMP/Payload"
+          mkdir -p "$RUNNER_TEMP/Payload" out
+          cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/"
+          (cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/wuaizhibo-ios-v1.0/out/WuAiZhiBo-iOS-v1.0.1-unsigned.ipa" Payload)
+          cd "$GITHUB_WORKSPACE"
+          zip -qry "wuaizhibo-ios-v1.0/out/WuAiZhiBo-iOS-v1.0.1-source.zip" wuaizhibo-ios-v1.0 -x 'wuaizhibo-ios-v1.0/build/*' 'wuaizhibo-ios-v1.0/out/*'
+          shasum -a 256 wuaizhibo-ios-v1.0/out/WuAiZhiBo-iOS-v1.0.1-unsigned.ipa > wuaizhibo-ios-v1.0/out/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wuaizhibo-ios-v1.0.1-build
+          path: wuaizhibo-ios-v1.0/out/
+          if-no-files-found: error
