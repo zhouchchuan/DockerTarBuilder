@@ -7,7 +7,8 @@
         android:allowBackup="false"
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true"
-        android:icon="@drawable/app_icon"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="吾爱直播"
         android:theme="@style/AppTheme">
 
