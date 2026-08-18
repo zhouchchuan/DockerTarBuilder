@@ -87,14 +87,12 @@ public class MainActivity extends Activity {
                         initX5();
                     })
                     .show();
-            scheduleImmersiveRefresh();
         }
     }
 
     private void createShell() {
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(6, 20, 46));
-
         splash = new ImageView(this);
         splash.setBackgroundColor(Color.rgb(6, 20, 46));
         splash.setImageResource(R.drawable.splash_brand);
@@ -102,10 +100,7 @@ public class MainActivity extends Activity {
         splash.setClickable(true);
         splash.setVisibility(View.VISIBLE);
         splash.setAlpha(1f);
-        root.addView(splash, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
+        root.addView(splash, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
     }
 
@@ -115,33 +110,24 @@ public class MainActivity extends Activity {
         settings.put(TbsCoreSettings.TBS_SETTINGS_USE_SPEEDY_CLASSLOADER, true);
         settings.put(TbsCoreSettings.TBS_SETTINGS_USE_DEXLOADER_SERVICE, true);
         QbSdk.initTbsSettings(settings);
-
         QbSdk.initX5Environment(getApplicationContext(), new QbSdk.PreInitCallback() {
             @Override public void onCoreInitFinished() { }
-
             @Override public void onViewInitFinished(boolean isX5Core) {
                 initCallback = true;
                 createWebView();
             }
         });
-
         ui.postDelayed(() -> {
-            if (!initCallback && !webCreated && !isFinishing()) {
-                createWebView();
-            }
+            if (!initCallback && !webCreated && !isFinishing()) createWebView();
         }, 8000L);
     }
 
     private void createWebView() {
         if (webCreated || isFinishing()) return;
         webCreated = true;
-
         webView = new WebView(this);
         webView.setBackgroundColor(Color.rgb(6, 20, 46));
-        root.addView(webView, 0, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
+        root.addView(webView, 0, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         configureWebView();
         enterImmersive();
         webView.loadUrl(HOME_URL);
@@ -173,7 +159,6 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(0);
 
         webView.addJavascriptInterface(new NativeBridge(), "WuAiNative");
-
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(webView, true);
@@ -181,9 +166,7 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
-                if (!isTrustedUrl(url) && (serverLandscapeMode || serverPortraitMode)) {
-                    handleServerFullscreenMode("off");
-                }
+                if (!isTrustedUrl(url) && (serverLandscapeMode || serverPortraitMode)) handleServerFullscreenMode("off");
                 enterImmersive();
             }
 
@@ -198,9 +181,7 @@ public class MainActivity extends Activity {
                 if (url == null) return false;
                 Uri uri = Uri.parse(url);
                 String scheme = uri.getScheme();
-                if (scheme == null || "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
-                    return false;
-                }
+                if (scheme == null || "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) return false;
                 return openExternal(uri);
             }
 
@@ -227,14 +208,10 @@ public class MainActivity extends Activity {
                     callback.onCustomViewHidden();
                     return;
                 }
-
                 customView = view;
                 customCallback = callback;
                 webView.setVisibility(View.GONE);
-                root.addView(view, new FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT));
-
+                root.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 enterImmersive();
                 applyNativeFullscreenOrientation();
@@ -245,12 +222,9 @@ public class MainActivity extends Activity {
                 exitFullscreen();
             }
 
-            @Override public boolean onShowFileChooser(WebView view,
-                                                       ValueCallback<Uri[]> callback,
-                                                       FileChooserParams params) {
+            @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
                 if (fileCallback != null) fileCallback.onReceiveValue(null);
                 fileCallback = callback;
-
                 Intent intent;
                 try {
                     intent = params.createIntent();
@@ -259,7 +233,6 @@ public class MainActivity extends Activity {
                     intent.addCategory(Intent.CATEGORY_OPENABLE);
                     intent.setType("*/*");
                 }
-
                 try {
                     startActivityForResult(intent, FILE_CHOOSER_REQUEST);
                     return true;
@@ -272,11 +245,7 @@ public class MainActivity extends Activity {
         });
 
         webView.setDownloadListener(new DownloadListener() {
-            @Override public void onDownloadStart(String url,
-                                                  String userAgent,
-                                                  String contentDisposition,
-                                                  String mimetype,
-                                                  long contentLength) {
+            @Override public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimetype, long contentLength) {
                 openExternal(Uri.parse(url));
             }
         });
@@ -284,63 +253,24 @@ public class MainActivity extends Activity {
 
     private void applyMobileFix(WebView view) {
         if (view == null) return;
-
         String js = "(function(){try{" +
                 "var d=document;if(!d||!d.head)return;" +
-                "var v=d.querySelector('meta[name=\\\"viewport\\\"]');" +
-                "if(!v){v=d.createElement('meta');v.name='viewport';d.head.appendChild(v);}" +
-                "v.setAttribute('content','width=device-width, initial-scale=1.0, viewport-fit=cover');" +
-                "var s=d.getElementById('wuaizhibo-mobile-fix');" +
-                "if(!s){s=d.createElement('style');s.id='wuaizhibo-mobile-fix';d.head.appendChild(s);}" +
-                "s.textContent='" +
-                "html{-webkit-text-size-adjust:100% !important;text-size-adjust:100% !important;}" +
+                "var v=d.querySelector('meta[name=\\\"viewport\\\"]');if(!v){v=d.createElement('meta');v.name='viewport';d.head.appendChild(v);}v.setAttribute('content','width=device-width, initial-scale=1.0, viewport-fit=cover');" +
+                "var s=d.getElementById('wuaizhibo-mobile-fix');if(!s){s=d.createElement('style');s.id='wuaizhibo-mobile-fix';d.head.appendChild(s);}" +
+                "s.textContent='html{-webkit-text-size-adjust:100% !important;text-size-adjust:100% !important;}" +
                 ".madouym[data-video-orientation=\\\"portrait\\\"] .force-landscape-hitbox{pointer-events:auto !important;}" +
                 "html.wuaizhibo-portrait-page,body.wuaizhibo-portrait-page{margin:0 !important;padding:0 !important;width:100% !important;height:100% !important;overflow:hidden !important;background:#000 !important;overscroll-behavior:none !important;}" +
                 ".madouym.wuaizhibo-portrait-player{position:fixed !important;left:0 !important;top:0 !important;right:0 !important;bottom:0 !important;width:100vw !important;height:100vh !important;height:100dvh !important;max-width:none !important;max-height:none !important;margin:0 !important;padding:0 !important;z-index:2147483646 !important;background:#000 !important;overflow:hidden !important;}" +
-                ".madouym.wuaizhibo-portrait-player iframe,.madouym.wuaizhibo-portrait-player video,.madouym.wuaizhibo-portrait-player>iframe,.madouym.wuaizhibo-portrait-player>video{width:100% !important;height:100% !important;max-width:none !important;max-height:none !important;margin:0 !important;padding:0 !important;}" +
-                "';" +
-                "if(!window.__wuaifsBridgeInstalled){" +
-                    "window.__wuaifsBridgeInstalled=true;" +
-                    "var nativeSet=function(m){try{if(window.WuAiNative&&typeof window.WuAiNative.setFullscreenMode==='function')window.WuAiNative.setFullscreenMode(m);}catch(x){}};" +
-                    "var portraitPlayer=null;" +
-                    "var sync=function(){try{" +
-                        "var de=d.documentElement,b=d.body;" +
-                        "var landscape=!!((de&&de.classList.contains('force-landscape-page'))||(b&&b.classList.contains('force-landscape-page'))||d.querySelector('.madouym.force-landscape-player'));" +
-                        "var portrait=!!d.querySelector('.madouym.wuaizhibo-portrait-player');" +
-                        "nativeSet(landscape?'landscape':(portrait?'portrait':'off'));" +
-                    "}catch(x){}};" +
-                    "var exitPortrait=function(){try{" +
-                        "var p=d.querySelector('.madouym.wuaizhibo-portrait-player');" +
-                        "if(p)p.classList.remove('wuaizhibo-portrait-player');" +
-                        "if(d.documentElement)d.documentElement.classList.remove('wuaizhibo-portrait-page');" +
-                        "if(d.body)d.body.classList.remove('wuaizhibo-portrait-page');" +
-                        "portraitPlayer=null;nativeSet('off');return true;" +
-                    "}catch(x){nativeSet('off');return false;}};" +
-                    "var enterPortrait=function(p){try{" +
-                        "var old=d.querySelector('.madouym.wuaizhibo-portrait-player');" +
-                        "if(old&&old!==p)old.classList.remove('wuaizhibo-portrait-player');" +
-                        "portraitPlayer=p;" +
-                        "if(d.documentElement)d.documentElement.classList.add('wuaizhibo-portrait-page');" +
-                        "if(d.body)d.body.classList.add('wuaizhibo-portrait-page');" +
-                        "p.classList.add('wuaizhibo-portrait-player');nativeSet('portrait');return true;" +
-                    "}catch(x){return false;}};" +
-                    "window.__WuAiExitPortrait=exitPortrait;" +
-                    "d.addEventListener('click',function(e){try{" +
-                        "var t=e.target;var btn=t&&t.closest?t.closest('.force-landscape-hitbox'):null;if(!btn)return;" +
-                        "var p=btn.closest?btn.closest('.madouym'):null;if(!p)return;" +
-                        "var mode=p.getAttribute('data-video-orientation')||'';if(mode!=='portrait')return;" +
-                        "e.preventDefault();e.stopPropagation();if(typeof e.stopImmediatePropagation==='function')e.stopImmediatePropagation();" +
-                        "if(p.classList.contains('wuaizhibo-portrait-player'))exitPortrait();else enterPortrait(p);" +
-                    "}catch(x){}},true);" +
-                    "var mo=new MutationObserver(sync);" +
-                    "mo.observe(d.documentElement,{attributes:true,childList:true,subtree:true,attributeFilter:['class','data-video-orientation']});" +
-                    "d.addEventListener('fullscreenchange',sync,true);" +
-                    "window.addEventListener('pageshow',sync,true);" +
-                    "window.addEventListener('pagehide',function(){try{exitPortrait();nativeSet('off');}catch(x){}},true);" +
-                    "sync();" +
-                "}" +
+                ".madouym.wuaizhibo-portrait-player iframe,.madouym.wuaizhibo-portrait-player video,.madouym.wuaizhibo-portrait-player>iframe,.madouym.wuaizhibo-portrait-player>video{width:100% !important;height:100% !important;max-width:none !important;max-height:none !important;margin:0 !important;padding:0 !important;}';" +
+                "if(!window.__wuaifsBridgeInstalled){window.__wuaifsBridgeInstalled=true;" +
+                "var nativeSet=function(m){try{if(window.WuAiNative&&typeof window.WuAiNative.setFullscreenMode==='function')window.WuAiNative.setFullscreenMode(m);}catch(x){}};" +
+                "var exitPortrait=function(){try{var p=d.querySelector('.madouym.wuaizhibo-portrait-player');if(p)p.classList.remove('wuaizhibo-portrait-player');if(d.documentElement)d.documentElement.classList.remove('wuaizhibo-portrait-page');if(d.body)d.body.classList.remove('wuaizhibo-portrait-page');nativeSet('off');return true;}catch(x){nativeSet('off');return false;}};" +
+                "var enterPortrait=function(p){try{var old=d.querySelector('.madouym.wuaizhibo-portrait-player');if(old&&old!==p)old.classList.remove('wuaizhibo-portrait-player');if(d.documentElement)d.documentElement.classList.add('wuaizhibo-portrait-page');if(d.body)d.body.classList.add('wuaizhibo-portrait-page');p.classList.add('wuaizhibo-portrait-player');nativeSet('portrait');return true;}catch(x){return false;}};" +
+                "window.__WuAiExitPortrait=exitPortrait;" +
+                "d.addEventListener('click',function(e){try{var t=e.target;var btn=t&&t.closest?t.closest('.force-landscape-hitbox'):null;if(!btn)return;var p=btn.closest?btn.closest('.madouym'):null;if(!p)return;var mode=p.getAttribute('data-video-orientation')||'';if(mode!=='portrait')return;e.preventDefault();e.stopPropagation();if(typeof e.stopImmediatePropagation==='function')e.stopImmediatePropagation();if(p.classList.contains('wuaizhibo-portrait-player'))exitPortrait();else enterPortrait(p);}catch(x){}},true);" +
+                "var sync=function(){try{var de=d.documentElement,b=d.body;var landscape=!!((de&&de.classList.contains('force-landscape-page'))||(b&&b.classList.contains('force-landscape-page'))||d.querySelector('.madouym.force-landscape-player'));var portrait=!!d.querySelector('.madouym.wuaizhibo-portrait-player');nativeSet(landscape?'landscape':(portrait?'portrait':'off'));}catch(x){}};" +
+                "var mo=new MutationObserver(sync);mo.observe(d.documentElement,{attributes:true,childList:true,subtree:true,attributeFilter:['class','data-video-orientation']});d.addEventListener('fullscreenchange',sync,true);window.addEventListener('pageshow',sync,true);window.addEventListener('pagehide',function(){try{exitPortrait();nativeSet('off');}catch(x){}},true);sync();}" +
                 "}catch(e){}})();";
-
         view.evaluateJavascript(js, null);
     }
 
@@ -357,40 +287,31 @@ public class MainActivity extends Activity {
     private void handleServerFullscreenMode(String mode) {
         boolean landscape = "landscape".equalsIgnoreCase(mode);
         boolean portrait = "portrait".equalsIgnoreCase(mode);
-
         if (landscape) {
             serverLandscapeMode = true;
             serverPortraitMode = false;
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-            if (customView == null) {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-            }
+            if (customView == null) setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             enterImmersive();
             scheduleImmersiveRefresh();
             return;
         }
-
         if (portrait) {
             serverPortraitMode = true;
             serverLandscapeMode = false;
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-            if (customView == null) {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
-            }
+            if (customView == null) setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
             enterImmersive();
             scheduleImmersiveRefresh();
             return;
         }
-
         boolean wasManagedFullscreen = serverLandscapeMode || serverPortraitMode;
         serverLandscapeMode = false;
         serverPortraitMode = false;
-
         if (wasManagedFullscreen && customView == null) {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
         }
-
         enterImmersive();
         scheduleImmersiveRefresh();
     }
@@ -400,22 +321,12 @@ public class MainActivity extends Activity {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
             return;
         }
-
-        String js = "(function(){try{" +
-                "var p=document.querySelector('.madouym.wuaizhibo-portrait-player');if(p)return 'portrait';" +
-                "var ps=document.querySelectorAll('.madouym[data-video-orientation]');" +
-                "for(var i=0;i<ps.length;i++){var m=ps[i].getAttribute('data-video-orientation');if(m==='portrait'||m==='landscape')return m;}" +
-                "var v=document.querySelector('video');if(v&&v.videoWidth&&v.videoHeight)return v.videoHeight>v.videoWidth?'portrait':'landscape';" +
-                "return 'portrait';}catch(e){return 'portrait';}})();";
-
+        String js = "(function(){try{var p=document.querySelector('.madouym.wuaizhibo-portrait-player');if(p)return 'portrait';var ps=document.querySelectorAll('.madouym[data-video-orientation]');for(var i=0;i<ps.length;i++){var m=ps[i].getAttribute('data-video-orientation');if(m==='portrait'||m==='landscape')return m;}var v=document.querySelector('video');if(v&&v.videoWidth&&v.videoHeight)return v.videoHeight>v.videoWidth?'portrait':'landscape';return 'portrait';}catch(e){return 'portrait';}})();";
         webView.evaluateJavascript(js, value -> {
             if (customView == null) return;
             String mode = value == null ? "portrait" : value.replace("\"", "").trim();
-            if ("landscape".equalsIgnoreCase(mode)) {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-            } else {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
-            }
+            if ("landscape".equalsIgnoreCase(mode)) setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            else setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
             scheduleImmersiveRefresh();
         });
     }
@@ -438,15 +349,13 @@ public class MainActivity extends Activity {
         try {
             if ("intent".equalsIgnoreCase(uri.getScheme())) {
                 Intent parsed = Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME);
-                if (parsed.resolveActivity(getPackageManager()) != null) {
-                    startActivity(parsed);
-                } else {
+                if (parsed.resolveActivity(getPackageManager()) != null) startActivity(parsed);
+                else {
                     String fallback = parsed.getStringExtra("browser_fallback_url");
                     if (fallback != null && webView != null) webView.loadUrl(fallback);
                 }
                 return true;
             }
-
             startActivity(new Intent(Intent.ACTION_VIEW, uri));
             return true;
         } catch (Exception e) {
@@ -458,50 +367,36 @@ public class MainActivity extends Activity {
 
     private void hideSplash() {
         if (splash == null || splash.getVisibility() != View.VISIBLE) return;
-
         long delay = Math.max(0L, MIN_SPLASH_MS - (System.currentTimeMillis() - splashStart));
         ui.postDelayed(() -> {
             if (splash == null || splash.getVisibility() != View.VISIBLE) return;
-            splash.animate()
-                    .alpha(0f)
-                    .setDuration(260L)
-                    .withEndAction(() -> {
-                        splash.setVisibility(View.GONE);
-                        splash.setAlpha(1f);
-                        splash.setClickable(false);
-                        enterImmersive();
-                        scheduleImmersiveRefresh();
-                    })
-                    .start();
+            splash.animate().alpha(0f).setDuration(260L).withEndAction(() -> {
+                splash.setVisibility(View.GONE);
+                splash.setAlpha(1f);
+                splash.setClickable(false);
+                enterImmersive();
+                scheduleImmersiveRefresh();
+            }).start();
         }, delay);
     }
 
     private void scheduleImmersiveRefresh() {
-        ui.postDelayed(() -> {
-            if (!isFinishing()) enterImmersive();
-        }, 60L);
-        ui.postDelayed(() -> {
-            if (!isFinishing()) enterImmersive();
-        }, 240L);
-        ui.postDelayed(() -> {
-            if (!isFinishing()) enterImmersive();
-        }, 700L);
+        ui.postDelayed(() -> { if (!isFinishing()) enterImmersive(); }, 60L);
+        ui.postDelayed(() -> { if (!isFinishing()) enterImmersive(); }, 240L);
+        ui.postDelayed(() -> { if (!isFinishing()) enterImmersive(); }, 700L);
     }
 
     private void enterImmersive() {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             WindowManager.LayoutParams lp = getWindow().getAttributes();
             lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
             getWindow().setAttributes(lp);
         }
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             getWindow().setStatusBarContrastEnforced(false);
             getWindow().setNavigationBarContrastEnforced(false);
         }
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getWindow().setDecorFitsSystemWindows(false);
             WindowInsetsController controller = getWindow().getInsetsController();
@@ -510,7 +405,6 @@ public class MainActivity extends Activity {
                 controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
             }
         }
-
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_FULLSCREEN |
                 View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
@@ -522,16 +416,13 @@ public class MainActivity extends Activity {
 
     private void exitFullscreen() {
         if (customView == null) return;
-
         root.removeView(customView);
         customView = null;
         if (webView != null) webView.setVisibility(View.VISIBLE);
-
         if (customCallback != null) {
             customCallback.onCustomViewHidden();
             customCallback = null;
         }
-
         if (serverLandscapeMode) {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -542,7 +433,6 @@ public class MainActivity extends Activity {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
         }
-
         enterImmersive();
         scheduleImmersiveRefresh();
     }
@@ -550,26 +440,13 @@ public class MainActivity extends Activity {
     @Override public void onBackPressed() {
         if (customView != null) {
             exitFullscreen();
-            return;
-        }
-
-        if (serverPortraitMode) {
-            if (webView != null) {
-                webView.evaluateJavascript("(function(){try{if(window.__WuAiExitPortrait)return window.__WuAiExitPortrait();return false;}catch(e){return false;}})();", null);
-            }
+        } else if (serverPortraitMode) {
+            if (webView != null) webView.evaluateJavascript("(function(){try{if(window.__WuAiExitPortrait)return window.__WuAiExitPortrait();return false;}catch(e){return false;}})();", null);
             handleServerFullscreenMode("off");
-            return;
-        }
-
-        if (serverLandscapeMode) {
-            if (webView != null) {
-                webView.evaluateJavascript("(function(){try{var b=document.querySelector('.force-landscape-hitbox');if(b){b.click();return true;}document.documentElement.classList.remove('force-landscape-page');if(document.body)document.body.classList.remove('force-landscape-page');var p=document.querySelector('.madouym.force-landscape-player');if(p)p.classList.remove('force-landscape-player');return true;}catch(e){return false;}})();", null);
-            }
+        } else if (serverLandscapeMode) {
+            if (webView != null) webView.evaluateJavascript("(function(){try{var b=document.querySelector('.force-landscape-hitbox');if(b){b.click();return true;}document.documentElement.classList.remove('force-landscape-page');if(document.body)document.body.classList.remove('force-landscape-page');var p=document.querySelector('.madouym.force-landscape-player');if(p)p.classList.remove('force-landscape-player');return true;}catch(e){return false;}})();", null);
             handleServerFullscreenMode("off");
-            return;
-        }
-
-        if (webView != null && webView.canGoBack()) {
+        } else if (webView != null && webView.canGoBack()) {
             webView.goBack();
             scheduleImmersiveRefresh();
         } else {
@@ -591,9 +468,7 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == FILE_CHOOSER_REQUEST && fileCallback != null) {
             Uri[] result = null;
-            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
-                result = new Uri[]{data.getData()};
-            }
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) result = new Uri[]{data.getData()};
             fileCallback.onReceiveValue(result);
             fileCallback = null;
         }
