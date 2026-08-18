@@ -16,37 +16,33 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Restore approved brand artwork
+      - name: Restore brand artwork
         shell: bash
         run: |
           cd wuaizhibo-ios-v1.0
           python3 - <<'PY'
           from pathlib import Path
           import base64
-          source = Path('../.github/workflows/build-wuaizhibo-x5.yml').read_text(encoding='utf-8')
-          marker = "cat > /tmp/icon.b64 <<'EOF'\n"
-          a = source.index(marker) + len(marker)
-          b = source.index('\nEOF', a)
-          raw = base64.b64decode(''.join(source[a:b].split()))
-          Path('/tmp/wuai-icon-source.jpg').write_bytes(raw)
+          raw = base64.b64decode(Path('brand/icon-flat.png.b64').read_text(encoding='utf-8').strip())
+          Path('/tmp/wuai-icon-source.png').write_bytes(raw)
           PY
 
           mkdir -p WuAiZhiBo/Assets.xcassets/AppIcon.appiconset
           mkdir -p WuAiZhiBo/Assets.xcassets/BrandLogo.imageset
 
-          sips -s format png -z 1024 1024 /tmp/wuai-icon-source.jpg --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-1024.png >/dev/null
-          sips -s format png -z 40 40 /tmp/wuai-icon-source.jpg --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-40.png >/dev/null
-          sips -s format png -z 60 60 /tmp/wuai-icon-source.jpg --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-60.png >/dev/null
-          sips -s format png -z 58 58 /tmp/wuai-icon-source.jpg --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-58.png >/dev/null
-          sips -s format png -z 87 87 /tmp/wuai-icon-source.jpg --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-87.png >/dev/null
-          sips -s format png -z 80 80 /tmp/wuai-icon-source.jpg --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-80.png >/dev/null
-          sips -s format png -z 120 120 /tmp/wuai-icon-source.jpg --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-120.png >/dev/null
+          sips -s format png -z 1024 1024 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-1024.png >/dev/null
+          sips -s format png -z 40 40 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-40.png >/dev/null
+          sips -s format png -z 60 60 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-60.png >/dev/null
+          sips -s format png -z 58 58 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-58.png >/dev/null
+          sips -s format png -z 87 87 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-87.png >/dev/null
+          sips -s format png -z 80 80 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-80.png >/dev/null
+          sips -s format png -z 120 120 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-120.png >/dev/null
           cp WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-120.png WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-120-60.png
-          sips -s format png -z 180 180 /tmp/wuai-icon-source.jpg --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-180.png >/dev/null
+          sips -s format png -z 180 180 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-180.png >/dev/null
 
-          sips -s format png -z 256 256 /tmp/wuai-icon-source.jpg --out WuAiZhiBo/Assets.xcassets/BrandLogo.imageset/BrandLogo-256.png >/dev/null
-          sips -s format png -z 512 512 /tmp/wuai-icon-source.jpg --out WuAiZhiBo/Assets.xcassets/BrandLogo.imageset/BrandLogo-512.png >/dev/null
-          sips -s format png -z 768 768 /tmp/wuai-icon-source.jpg --out WuAiZhiBo/Assets.xcassets/BrandLogo.imageset/BrandLogo-768.png >/dev/null
+          sips -s format png -z 256 256 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/BrandLogo.imageset/BrandLogo-256.png >/dev/null
+          sips -s format png -z 512 512 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/BrandLogo.imageset/BrandLogo-512.png >/dev/null
+          sips -s format png -z 768 768 /tmp/wuai-icon-source.png --out WuAiZhiBo/Assets.xcassets/BrandLogo.imageset/BrandLogo-768.png >/dev/null
 
       - name: Build unsigned device app
         shell: bash
@@ -70,6 +66,7 @@ jobs:
           cd wuaizhibo-ios-v1.0
           APP_PATH="$PWD/build/Build/Products/Release-iphoneos/WuAiZhiBo.app"
           test -d "$APP_PATH"
+          rm -rf "$RUNNER_TEMP/Payload"
           mkdir -p "$RUNNER_TEMP/Payload" out
           cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/"
           (cd "$RUNNER_TEMP" && zip -qry "$GITHUB_WORKSPACE/wuaizhibo-ios-v1.0/out/WuAiZhiBo-iOS-v1.0-unsigned.ipa" Payload)
