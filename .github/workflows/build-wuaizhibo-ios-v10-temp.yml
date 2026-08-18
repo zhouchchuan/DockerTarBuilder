@@ -34,7 +34,6 @@ jobs:
         run: |
           cd wuaizhibo-ios-v1.0
           rm -rf build
-          mkdir -p build/Release-iphoneos
           xcodebuild \
             -project WuAiZhiBo.xcodeproj \
             -target WuAiZhiBo \
@@ -44,7 +43,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            clean build
+            build
 
       - name: Package unsigned IPA and source
         shell: bash
