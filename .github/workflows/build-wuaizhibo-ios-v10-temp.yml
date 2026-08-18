@@ -34,12 +34,13 @@ jobs:
         run: |
           cd wuaizhibo-ios-v1.0
           rm -rf build
+          mkdir -p build/Release-iphoneos
           xcodebuild \
             -project WuAiZhiBo.xcodeproj \
             -target WuAiZhiBo \
             -configuration Release \
             -sdk iphoneos \
-            -derivedDataPath "$PWD/build" \
+            CONFIGURATION_BUILD_DIR="$PWD/build/Release-iphoneos" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -49,7 +50,7 @@ jobs:
         shell: bash
         run: |
           cd wuaizhibo-ios-v1.0
-          APP_PATH="$PWD/build/Build/Products/Release-iphoneos/WuAiZhiBo.app"
+          APP_PATH="$PWD/build/Release-iphoneos/WuAiZhiBo.app"
           test -d "$APP_PATH"
           rm -rf "$RUNNER_TEMP/Payload"
           mkdir -p "$RUNNER_TEMP/Payload" out
