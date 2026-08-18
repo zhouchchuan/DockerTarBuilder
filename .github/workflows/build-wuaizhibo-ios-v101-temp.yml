@@ -21,7 +21,7 @@ jobs:
         run: |
           cd wuaizhibo-ios-v1.0
           cat brand/approved-v101.part*.b64 > /tmp/wuai-approved-icon.b64
-          base64 -D /tmp/wuai-approved-icon.b64 > /tmp/wuai-approved-icon.jpg
+          base64 -D -i /tmp/wuai-approved-icon.b64 -o /tmp/wuai-approved-icon.jpg
           file /tmp/wuai-approved-icon.jpg
           mkdir -p WuAiZhiBo/Assets.xcassets/AppIcon.appiconset WuAiZhiBo/Assets.xcassets/BrandLogo.imageset
           sips -s format png -z 1024 1024 /tmp/wuai-approved-icon.jpg --out WuAiZhiBo/Assets.xcassets/AppIcon.appiconset/Icon-1024.png >/dev/null
