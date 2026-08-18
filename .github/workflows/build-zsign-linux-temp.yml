@@ -1,0 +1,34 @@
+name: Build zsign Linux helper
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, reopened, synchronize]
+
+jobs:
+  build-zsign:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y git g++ pkg-config libssl-dev
+
+      - name: Build zsign
+        shell: bash
+        run: |
+          git clone --depth=1 https://github.com/zhlynn/zsign.git /tmp/zsign
+          cd /tmp/zsign/build/linux
+          make clean
+          make -j2
+          ./zsign -v || true
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp zsign "$GITHUB_WORKSPACE/out/zsign-linux"
+          chmod +x "$GITHUB_WORKSPACE/out/zsign-linux"
+          sha256sum "$GITHUB_WORKSPACE/out/zsign-linux" > "$GITHUB_WORKSPACE/out/zsign-linux-SHA256.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zsign-linux-helper
+          path: out/
+          if-no-files-found: error
