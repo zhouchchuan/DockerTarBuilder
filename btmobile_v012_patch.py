@@ -33,14 +33,15 @@ peer_method = r'''- (NSArray<NSString *> *)peerAddresses {
         std::vector<lt::peer_info> peers;
         handle.get_peer_info(peers);
         for (auto const &peer : peers) {
-            auto endpoint = peer.ip;
+            auto endpoint = peer.remote_endpoint();
             auto addressString = endpoint.address().to_string();
             if (addressString.empty()) { continue; }
             NSString *host = [NSString stringWithUTF8String:addressString.c_str()];
             if (host == nil || host.length == 0) { continue; }
+            unsigned int port = static_cast<unsigned int>(endpoint.port());
             NSString *value = [host containsString:@":"]
-                ? [NSString stringWithFormat:@"[%@]:%u", host, endpoint.port()]
-                : [NSString stringWithFormat:@"%@:%u", host, endpoint.port()];
+                ? [NSString stringWithFormat:@"[%@]:%u", host, port]
+                : [NSString stringWithFormat:@"%@:%u", host, port];
             [result addObject:value];
         }
     }];
