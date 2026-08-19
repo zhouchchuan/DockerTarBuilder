@@ -1,0 +1,165 @@
+name: BT Mobile iOS V0.1.2 Peer Build
+
+on:
+  push:
+    branches: [ btmobile-ios-v0.1.2 ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-26
+    steps:
+      - name: Checkout BTMobile build scripts
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 26.6
+
+      - name: Checkout proven iTorrent baseline
+        run: |
+          set -euxo pipefail
+          git clone --recursive --branch v2.2.0-1 --depth 1 https://github.com/XITRIX/iTorrent.git src
+          git -C src submodule update --init --recursive
+
+      - name: Apply V0.1.1 proven BTMobile baseline patches
+        run: |
+          set -euxo pipefail
+          python3 btmobile_v011_patch2.py
+          python3 btmobile_v011_swiftfix.py
+
+      - name: Apply V0.1.2 live Peer region patch
+        run: |
+          set -euxo pipefail
+          python3 btmobile_v012_peerfix.py
+          grep -n "Peer 节点" src/iTorrent/Screens/TorrentDetails/TorrentDetailsViewModel.swift
+          grep -n "Timer.publish(every: 1.0" src/iTorrent/Screens/TorrentDetails/TorrentDetailsViewModel.swift
+          grep -n "get_peer_info" src/Submodules/LibTorrent-Swift/LibTorrent/Core/TorrentHandle/TorrentHandle.mm
+
+      - name: Prepare dependencies
+        working-directory: src
+        run: |
+          set -euxo pipefail
+          brew install boost
+          cat > iTorrent/Core/Assets/GoogleService-Info.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>CLIENT_ID</key><string>disabled</string>
+          <key>REVERSED_CLIENT_ID</key><string>disabled</string>
+          <key>API_KEY</key><string>disabled</string>
+          <key>GCM_SENDER_ID</key><string>0</string>
+          <key>PLIST_VERSION</key><string>1</string>
+          <key>BUNDLE_ID</key><string>com.mxmall123.app</string>
+          <key>PROJECT_ID</key><string>btmobile-local</string>
+          <key>STORAGE_BUCKET</key><string>btmobile-local.invalid</string>
+          <key>IS_ADS_ENABLED</key><false/>
+          <key>IS_ANALYTICS_ENABLED</key><false/>
+          <key>IS_APPINVITE_ENABLED</key><false/>
+          <key>IS_GCM_ENABLED</key><false/>
+          <key>IS_SIGNIN_ENABLED</key><false/>
+          <key>GOOGLE_APP_ID</key><string>1:0:ios:0000000000000000</string>
+          </dict></plist>
+          PLIST
+          chmod +x ./Submodules/LibTorrent-Swift/make.sh
+          ./Submodules/LibTorrent-Swift/make.sh
+
+      - name: Verify Peer bridge in LibTorrent framework
+        working-directory: src
+        run: |
+          set -euxo pipefail
+          LIB=$(find Submodules/LibTorrent-Swift -type f -path '*LibTorrent.framework/LibTorrent' | head -1)
+          test -n "$LIB"
+          echo "LibTorrent binary: $LIB"
+          strings "$LIB" | grep -q "peerStats"
+
+      - name: Build unsigned device app
+        working-directory: src
+        run: |
+          set -euxo pipefail
+          xcodebuild \
+            -workspace iTorrent.xcworkspace \
+            -scheme "iTorrent" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination generic/platform=iOS \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Package BTMobile V0.1.2 unsigned IPA
+        run: |
+          set -euxo pipefail
+          APP_PATH=$(find "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -type d -name '*.app' | head -1)
+          test -n "$APP_PATH"
+          echo "App: $APP_PATH"
+
+          rm -rf "$APP_PATH/_CodeSignature" "$APP_PATH/PlugIns" "$APP_PATH/Watch" "$APP_PATH/embedded.mobileprovision"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.mxmall123.app" "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.2" "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 3" "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName BT Mobile" "$APP_PATH/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName BT Mobile" "$APP_PATH/Info.plist" || true
+
+          LIB="$APP_PATH/Frameworks/LibTorrent.framework/LibTorrent"
+          test -f "$LIB"
+          strings "$LIB" | grep -q "peerStats"
+
+          mkdir -p "$RUNNER_TEMP/package/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/package/Payload/BTMobile.app"
+          cd "$RUNNER_TEMP/package"
+          /usr/bin/zip -qry "$RUNNER_TEMP/BTMobile-V0.1.2-Peer-unsigned.ipa" Payload
+
+          {
+            echo "BTMobile V0.1.2 Peer Build"
+            echo "baseline=XITRIX/iTorrent v2.2.0-1"
+            echo "bundle_id=com.mxmall123.app"
+            echo "version=0.1.2"
+            echo "build=3"
+            echo "peer_refresh=1s"
+            echo "peer_fields=ip,port,client,progress,download_rate,upload_rate,total_download,total_upload,state,transport,direction"
+            shasum -a 256 "$RUNNER_TEMP/BTMobile-V0.1.2-Peer-unsigned.ipa"
+          } > "$RUNNER_TEMP/BTMobile-V0.1.2-build.txt"
+          cat "$RUNNER_TEMP/BTMobile-V0.1.2-build.txt"
+
+      - name: Upload unsigned V0.1.2 IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BTMobile-V0.1.2-Peer-unsigned
+          path: |
+            ${{ runner.temp }}/BTMobile-V0.1.2-Peer-unsigned.ipa
+            ${{ runner.temp }}/BTMobile-V0.1.2-build.txt
+          retention-days: 3
+
+  build-zsign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout zsign
+        uses: actions/checkout@v4
+        with:
+          repository: zhlynn/zsign
+          ref: v1.1.1
+          fetch-depth: 1
+      - name: Build zsign
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y g++ pkg-config libssl-dev
+          cd build/linux
+          make clean
+          make
+          ../../bin/zsign -v
+          cp ../../bin/zsign "$RUNNER_TEMP/zsign"
+      - name: Upload zsign
+        uses: actions/upload-artifact@v4
+        with:
+          name: zsign-linux-x86_64-v1.1.1
+          path: ${{ runner.temp }}/zsign
+          retention-days: 3
