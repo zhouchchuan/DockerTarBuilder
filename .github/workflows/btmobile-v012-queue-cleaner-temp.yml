@@ -1,0 +1,53 @@
+name: BTMobile 0.1.2 Queue Cleaner TEMP
+
+on:
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel stale BTMobile build runs on this branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.request
+          repo = os.environ['REPO']
+          token = os.environ['GH_TOKEN']
+          current = os.environ['CURRENT_SHA']
+          base = f'https://api.github.com/repos/{repo}'
+          req = urllib.request.Request(
+              f'{base}/actions/runs?branch=btmobile-0.1.2-build&per_page=100',
+              headers={'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'}
+          )
+          with urllib.request.urlopen(req) as r:
+              runs = json.load(r).get('workflow_runs', [])
+          for run in runs:
+              name = run.get('name', '')
+              status = run.get('status')
+              sha = run.get('head_sha')
+              stale_push = name == 'BTMobile 0.1.2 Test Build'
+              stale_v011 = name == 'BT Mobile iOS V0.1.1 Build'
+              stale_v012_temp = name == 'BT Mobile iOS V0.1.2 Build TEMP' and sha != current
+              if status not in ('queued', 'in_progress') or not (stale_push or stale_v011 or stale_v012_temp):
+                  continue
+              cancel = urllib.request.Request(
+                  f"{base}/actions/runs/{run['id']}/cancel",
+                  method='POST',
+                  headers={'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'}
+              )
+              try:
+                  with urllib.request.urlopen(cancel) as r:
+                      print('cancelled', run['id'], name, sha, r.status)
+              except Exception as e:
+                  print('cancel failed', run['id'], name, e)
+          PY
