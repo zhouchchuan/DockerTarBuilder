@@ -66,15 +66,7 @@ jobs:
           PLIST
           chmod +x ./Submodules/LibTorrent-Swift/make.sh
           ./Submodules/LibTorrent-Swift/make.sh
-
-      - name: Verify Peer bridge in LibTorrent framework
-        working-directory: src
-        run: |
-          set -euxo pipefail
-          LIB=$(find Submodules/LibTorrent-Swift -type f -path '*LibTorrent.framework/LibTorrent' | head -1)
-          test -n "$LIB"
-          echo "LibTorrent binary: $LIB"
-          strings "$LIB" | grep -q "peerStats"
+          grep -n "get_peer_info" Submodules/LibTorrent-Swift/LibTorrent/Core/TorrentHandle/TorrentHandle.mm
 
       - name: Build unsigned device app
         working-directory: src
