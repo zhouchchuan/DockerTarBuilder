@@ -1,0 +1,3 @@
+BTMobile V0.1.4 build trigger
+Base: V0.1.3 stable BT baseline
+DHT/Peer logic frozen
