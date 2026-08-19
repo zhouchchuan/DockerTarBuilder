@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   build-ios:
@@ -81,9 +82,11 @@ jobs:
           ./Submodules/LibTorrent-Swift/make.sh
 
       - name: Build unsigned iPhone app
+        id: xcodebuild
+        continue-on-error: true
         run: |
           cd src
-          set -euxo pipefail
+          set -o pipefail
           xcodebuild \
             -workspace iTorrent.xcworkspace \
             -scheme "iTorrent" \
@@ -99,7 +102,42 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             MARKETING_VERSION="0.1.2" \
             CURRENT_PROJECT_VERSION="12" \
-            build
+            build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Report Xcode compiler errors
+        if: steps.xcodebuild.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PY' > "$RUNNER_TEMP/issue.json"
+          import json, os, re
+          from pathlib import Path
+          p = Path(os.environ['RUNNER_TEMP']) / 'xcodebuild.log'
+          lines = p.read_text(errors='replace').splitlines()
+          hits = []
+          for i, line in enumerate(lines):
+              if re.search(r'\berror:|fatal error:|BUILD FAILED|The following build commands failed', line, re.I):
+                  a=max(0,i-3); b=min(len(lines),i+5)
+                  hits.extend(lines[a:b])
+                  hits.append('---')
+          if not hits:
+              hits = lines[-180:]
+          text='\n'.join(hits[-300:])
+          body=f"Commit: {os.environ['HEAD_SHA']}\n\n```text\n{text[:50000]}\n```"
+          print(json.dumps({'title': f"BTMobile 0.1.2 Xcode error {os.environ['HEAD_SHA'][:8]}", 'body': body}))
+          PY
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/$REPO/issues" \
+            --data-binary @"$RUNNER_TEMP/issue.json"
+
+      - name: Stop after reported Xcode failure
+        if: steps.xcodebuild.outcome == 'failure'
+        run: exit 1
 
       - name: Package unsigned test IPA
         run: |
