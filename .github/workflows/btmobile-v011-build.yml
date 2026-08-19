@@ -31,6 +31,7 @@ jobs:
       - name: Apply BT Mobile V0.1.1 patches
         run: |
           python3 ci/btmobile_v011_patch2.py
+          python3 ci/btmobile_v011_swiftfix.py
 
       - name: Prepare libtorrent
         run: |
