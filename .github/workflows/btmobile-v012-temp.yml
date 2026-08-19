@@ -1,0 +1,145 @@
+name: BT Mobile iOS V0.1.2 Build TEMP
+
+on:
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - name: Checkout BTMobile patch branch
+        uses: actions/checkout@v4
+        with:
+          path: ci
+          fetch-depth: 1
+
+      - name: Checkout iTorrent v2.2.0-1
+        uses: actions/checkout@v4
+        with:
+          repository: XITRIX/iTorrent
+          ref: v2.2.0-1
+          submodules: recursive
+          fetch-depth: 1
+          path: src
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 26.6
+
+      - name: Apply BTMobile V0.1.2 patch
+        run: |
+          set -euxo pipefail
+          python3 ci/btmobile_v012_patch.py
+          grep -n "peerAddresses\|Peer / IP" \
+            src/Submodules/LibTorrent-Swift/LibTorrent/Core/TorrentHandle/TorrentHandle.h \
+            src/iTorrent/Screens/TorrentDetails/TorrentDetailsViewModel.swift
+
+      - name: Prepare build inputs
+        run: |
+          set -euxo pipefail
+          cat > src/iTorrent/Core/Assets/GoogleService-Info.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>CLIENT_ID</key><string>disabled</string>
+          <key>REVERSED_CLIENT_ID</key><string>disabled</string>
+          <key>API_KEY</key><string>disabled</string>
+          <key>GCM_SENDER_ID</key><string>0</string>
+          <key>PLIST_VERSION</key><string>1</string>
+          <key>BUNDLE_ID</key><string>com.mxmall123.app</string>
+          <key>PROJECT_ID</key><string>btmobile-local</string>
+          <key>STORAGE_BUCKET</key><string>btmobile-local.invalid</string>
+          <key>IS_ADS_ENABLED</key><false/>
+          <key>IS_ANALYTICS_ENABLED</key><false/>
+          <key>IS_APPINVITE_ENABLED</key><false/>
+          <key>IS_GCM_ENABLED</key><false/>
+          <key>IS_SIGNIN_ENABLED</key><false/>
+          <key>GOOGLE_APP_ID</key><string>1:0:ios:0000000000000000</string>
+          </dict></plist>
+          PLIST
+
+      - name: Package complete patched source
+        run: |
+          set -euxo pipefail
+          find src -name .DS_Store -delete
+          /usr/bin/zip -qry "$RUNNER_TEMP/BTMobile_V0.1.2_Source.zip" src \
+            -x 'src/.git/*' 'src/.git' '*/.git/*' '*/.git' \
+               '*/DerivedData/*' '*/build/*'
+
+      - name: Prepare libtorrent
+        run: |
+          set -euxo pipefail
+          brew install boost
+          cd src
+          chmod +x ./Submodules/LibTorrent-Swift/make.sh
+          ./Submodules/LibTorrent-Swift/make.sh
+
+      - name: Build unsigned iPhone app
+        run: |
+          cd src
+          set -euxo pipefail
+          xcodebuild \
+            -workspace iTorrent.xcworkspace \
+            -scheme "iTorrent" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination generic/platform=iOS \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            MARKETING_VERSION="0.1.2" \
+            CURRENT_PROJECT_VERSION="12" \
+            build
+
+      - name: Package unsigned test IPA
+        run: |
+          set -euxo pipefail
+          APP_PATH=$(find "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -type d -name '*.app' | head -1)
+          test -n "$APP_PATH"
+          rm -rf "$APP_PATH/_CodeSignature" "$APP_PATH/PlugIns" "$APP_PATH/Watch"
+          rm -f "$APP_PATH/embedded.mobileprovision"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName BT Mobile" "$APP_PATH/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName BTMobile" "$APP_PATH/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.2" "$APP_PATH/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 12" "$APP_PATH/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.mxmall123.app" "$APP_PATH/Info.plist" || true
+          mkdir -p "$RUNNER_TEMP/package/Payload"
+          ditto "$APP_PATH" "$RUNNER_TEMP/package/Payload/BTMobile.app"
+          cd "$RUNNER_TEMP/package"
+          /usr/bin/zip -qry "$RUNNER_TEMP/BTMobile_V0.1.2_Unsigned.ipa" Payload
+          file Payload/BTMobile.app/BTMobile 2>/dev/null || file Payload/BTMobile.app/iTorrent
+
+      - name: Fetch Linux zsign binary package
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 \
+            https://github.com/zhlynn/zsign/releases/download/v1.1.1/zsign-linux-x86_64.tar.gz \
+            -o "$RUNNER_TEMP/zsign-linux-x86_64.tar.gz"
+          echo '65873b256b8902715cc81c8c467e9dddb315a2b484c6d0f5fb2031bad819d8ba  '"$RUNNER_TEMP/zsign-linux-x86_64.tar.gz" | shasum -a 256 -c -
+
+      - name: Checksums
+        run: |
+          cd "$RUNNER_TEMP"
+          shasum -a 256 BTMobile_V0.1.2_Unsigned.ipa BTMobile_V0.1.2_Source.zip zsign-linux-x86_64.tar.gz > BTMobile_V0.1.2_Build_SHA256.txt
+
+      - name: Upload BTMobile V0.1.2 build products
+        uses: actions/upload-artifact@v4
+        with:
+          name: BTMobile-v0.1.2-build-products
+          compression-level: 0
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/BTMobile_V0.1.2_Unsigned.ipa
+            ${{ runner.temp }}/BTMobile_V0.1.2_Source.zip
+            ${{ runner.temp }}/BTMobile_V0.1.2_Build_SHA256.txt
+            ${{ runner.temp }}/zsign-linux-x86_64.tar.gz
