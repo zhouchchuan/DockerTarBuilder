@@ -1,0 +1,189 @@
+name: BTMobile 0.1.2 Test Build
+
+on:
+  push:
+    branches:
+      - btmobile-0.1.2-build
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - name: Checkout builder branch
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 26.6
+
+      - name: Checkout iTorrent v2.2.0-1
+        run: |
+          git clone --depth 1 --branch v2.2.0-1 --recurse-submodules https://github.com/XITRIX/iTorrent.git "$RUNNER_TEMP/iTorrent"
+          cd "$RUNNER_TEMP/iTorrent"
+          git submodule update --init --recursive
+
+      - name: Apply BTMobile 0.1.2 Peer/IP patch
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          root = Path(__import__('os').environ['RUNNER_TEMP']) / 'iTorrent'
+
+          # 1) Expose current connected peer endpoints from LibTorrent-Swift.
+          h = root / 'Submodules/LibTorrent-Swift/LibTorrent/Core/TorrentHandle/TorrentHandle.h'
+          s = h.read_text()
+          marker = '@property (readonly) BOOL isPrivate;\n'
+          assert marker in s, 'TorrentHandle.h marker not found'
+          s = s.replace(marker, marker + '@property (readonly) NSArray<NSString *> *peerAddresses;\n', 1)
+          h.write_text(s)
+
+          mm = root / 'Submodules/LibTorrent-Swift/LibTorrent/Core/TorrentHandle/TorrentHandle.mm'
+          s = mm.read_text()
+          marker = '#import "libtorrent/magnet_uri.hpp"\n'
+          assert marker in s, 'TorrentHandle.mm import marker not found'
+          s = s.replace(marker, marker + '#import "libtorrent/peer_info.hpp"\n', 1)
+          marker = '- (void)updateSnapshot {\n'
+          assert marker in s, 'TorrentHandle.mm updateSnapshot marker not found'
+          method = r'''- (NSArray<NSString *> *)peerAddresses {
+              NSMutableArray<NSString *> *result = [NSMutableArray array];
+              [self performOperation:@"peerAddresses" action:^(lt::torrent_handle const &handle) {
+                  std::vector<lt::peer_info> peers;
+                  handle.get_peer_info(peers);
+                  for (auto const &peer : peers) {
+                      auto endpoint = peer.ip;
+                      auto addressString = endpoint.address().to_string();
+                      if (addressString.empty()) { continue; }
+                      NSString *host = [NSString stringWithUTF8String:addressString.c_str()];
+                      if (host == nil || host.length == 0) { continue; }
+                      NSString *value = [host containsString:@":"]
+                          ? [NSString stringWithFormat:@"[%@]:%u", host, endpoint.port()]
+                          : [NSString stringWithFormat:@"%@:%u", host, endpoint.port()];
+                      [result addObject:value];
+                  }
+              }];
+              return result;
+          }
+
+          '''
+          s = s.replace(marker, method + marker, 1)
+          mm.write_text(s)
+
+          # 2) Add a live Peer/IP section to each torrent details page.
+          vm = root / 'iTorrent/Screens/TorrentDetails/TorrentDetailsViewModel.swift'
+          s = vm.read_text()
+          marker = '    private var torrentHandle: TorrentHandle!\n'
+          assert marker in s, 'TorrentDetailsViewModel property marker not found'
+          insert = '''    private let peerCountModel = DetailCellViewModel(title: "连接 Peer")\n    private var peerAddressModels: [DetailCellViewModel] = []\n    private var lastPeerAddresses: [String] = []\n'''
+          s = s.replace(marker, marker + insert, 1)
+
+          marker = '        stateModel.detail = friendlyState.name\n\n'
+          assert marker in s, 'TorrentDetailsViewModel data marker not found'
+          peer_update = '''        let peerAddresses = torrentHandle.peerAddresses.sorted()\n        peerCountModel.detail = "\\(peerAddresses.count)"\n        if peerAddresses != lastPeerAddresses {\n            lastPeerAddresses = peerAddresses\n            peerAddressModels = Array(peerAddresses.prefix(100)).enumerated().map { item in\n                DetailCellViewModel(\n                    title: "Peer \\(item.offset + 1)",\n                    detail: item.element,\n                    spacer: 108,\n                    isBold: false\n                )\n            }\n            reload()\n        }\n\n'''
+          s = s.replace(marker, marker + peer_update, 1)
+
+          marker = '        sections.append(.init(id: "actions", header: %"details.actions") {\n'
+          assert marker in s, 'TorrentDetailsViewModel actions marker not found'
+          peer_section = '''        let peerItems: [MvvmViewModel] = [peerCountModel] + peerAddressModels.map { $0 as MvvmViewModel }\n        sections.append(.init(id: "peers", header: "Peer / IP 地址", items: peerItems))\n\n'''
+          s = s.replace(marker, peer_section + marker, 1)
+          vm.write_text(s)
+
+          # Build/source marker for this derivative test version.
+          (root / 'BTMOBILE_0.1.2.md').write_text('''# BTMobile 0.1.2 Test\n\nBase: XITRIX/iTorrent v2.2.0-1\nBundle ID for test signing: com.mxmall123.app\nDisplay name: BT Mobile\n\nChanges:\n- Torrent rows continue to open the native torrent detail screen.\n- Shows live overall download/upload speed from TorrentHandle snapshot.\n- Adds live connected Peer count and up to 100 current Peer IP:port endpoints.\n- IPv6 endpoints are displayed as [address]:port.\n\nThe Peer/IP list is refreshed with normal torrent snapshot updates.\n''')
+          PY
+
+          grep -n "peerAddresses\|Peer / IP" "$RUNNER_TEMP/iTorrent/Submodules/LibTorrent-Swift/LibTorrent/Core/TorrentHandle/TorrentHandle.h" "$RUNNER_TEMP/iTorrent/iTorrent/Screens/TorrentDetails/TorrentDetailsViewModel.swift"
+
+      - name: Add Firebase client plist expected by upstream project
+        run: |
+          cat > "$RUNNER_TEMP/iTorrent/iTorrent/Core/Assets/GoogleService-Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>API_KEY</key><string>AIzaSyAEbFIIBWkytOKKoVuPppStHButfHK3HVM</string>
+          <key>GCM_SENDER_ID</key><string>612867314720</string>
+          <key>PLIST_VERSION</key><string>1</string>
+          <key>BUNDLE_ID</key><string>com.xitrix.iTorrent2</string>
+          <key>PROJECT_ID</key><string>itorrent-fdb49</string>
+          <key>STORAGE_BUCKET</key><string>itorrent-fdb49.appspot.com</string>
+          <key>IS_ADS_ENABLED</key><false/>
+          <key>IS_ANALYTICS_ENABLED</key><false/>
+          <key>IS_APPINVITE_ENABLED</key><true/>
+          <key>IS_GCM_ENABLED</key><true/>
+          <key>IS_SIGNIN_ENABLED</key><true/>
+          <key>GOOGLE_APP_ID</key><string>1:612867314720:ios:0fec2b66005070d3b55845</string>
+          </dict></plist>
+          PLIST
+
+      - name: Package patched source before build products
+        run: |
+          cd "$RUNNER_TEMP"
+          find iTorrent -name .DS_Store -delete
+          zip -qry "$RUNNER_TEMP/BTMobile_V0.1.2_Source.zip" iTorrent \
+            -x 'iTorrent/.git/*' 'iTorrent/.git' '*/.git/*' '*/.git' \
+               '*/DerivedData/*' '*/build/*'
+
+      - name: Prepare dependencies
+        run: |
+          brew install boost
+          cd "$RUNNER_TEMP/iTorrent"
+          chmod +x ./Submodules/LibTorrent-Swift/make.sh
+          ./Submodules/LibTorrent-Swift/make.sh
+
+      - name: Compile unsigned iOS application
+        run: |
+          cd "$RUNNER_TEMP/iTorrent"
+          xcodebuild \
+            -workspace iTorrent.xcworkspace \
+            -scheme "iTorrent" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            DEVELOPMENT_TEAM='' \
+            PROVISIONING_PROFILE_SPECIFIER='' \
+            clean build
+
+      - name: Make unsigned IPA payload
+        run: |
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/iTorrent.app"
+          test -d "$APP"
+          rm -rf "$APP/_CodeSignature" "$APP/PlugIns" "$APP/Watch"
+          rm -f "$APP/embedded.mobileprovision"
+          mkdir -p "$RUNNER_TEMP/unsigned/Payload"
+          ditto "$APP" "$RUNNER_TEMP/unsigned/Payload/iTorrent.app"
+          cd "$RUNNER_TEMP/unsigned"
+          zip -qry "$RUNNER_TEMP/BTMobile_V0.1.2_Unsigned.ipa" Payload
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Payload/iTorrent.app/Info.plist
+          file Payload/iTorrent.app/iTorrent
+
+      - name: Download Linux zsign for local private signing
+        run: |
+          curl -L --fail --retry 3 \
+            https://github.com/zhlynn/zsign/releases/download/v1.1.1/zsign-linux-x86_64.tar.gz \
+            -o "$RUNNER_TEMP/zsign-linux-x86_64.tar.gz"
+          echo '65873b256b8902715cc81c8c467e9dddb315a2b484c6d0f5fb2031bad819d8ba  '"$RUNNER_TEMP/zsign-linux-x86_64.tar.gz" | shasum -a 256 -c -
+
+      - name: Generate checksums
+        run: |
+          cd "$RUNNER_TEMP"
+          shasum -a 256 BTMobile_V0.1.2_Unsigned.ipa BTMobile_V0.1.2_Source.zip zsign-linux-x86_64.tar.gz > BTMobile_V0.1.2_build_SHA256.txt
+
+      - name: Upload build products
+        uses: actions/upload-artifact@v4
+        with:
+          name: BTMobile-V0.1.2-build-products
+          compression-level: 0
+          path: |
+            ${{ runner.temp }}/BTMobile_V0.1.2_Unsigned.ipa
+            ${{ runner.temp }}/BTMobile_V0.1.2_Source.zip
+            ${{ runner.temp }}/BTMobile_V0.1.2_build_SHA256.txt
+            ${{ runner.temp }}/zsign-linux-x86_64.tar.gz

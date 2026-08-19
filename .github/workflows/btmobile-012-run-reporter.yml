@@ -1,0 +1,42 @@
+name: BTMobile 0.1.2 Run Reporter
+
+on:
+  push:
+    branches:
+      - btmobile-0.1.2-build
+
+permissions:
+  actions: read
+  issues: write
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report matching BTMobile 0.1.2 build run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          sleep 10
+          JSON=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/actions/runs?branch=btmobile-0.1.2-build&per_page=30")
+          BUILD_ID=$(printf '%s' "$JSON" | python3 -c 'import json,sys,os; d=json.load(sys.stdin); sha=os.environ["SHA"]; xs=[r for r in d.get("workflow_runs",[]) if r.get("name")=="BTMobile 0.1.2 Test Build" and r.get("head_sha")==sha]; print(xs[0]["id"] if xs else "")')
+          BUILD_URL=$(printf '%s' "$JSON" | python3 -c 'import json,sys,os; d=json.load(sys.stdin); sha=os.environ["SHA"]; xs=[r for r in d.get("workflow_runs",[]) if r.get("name")=="BTMobile 0.1.2 Test Build" and r.get("head_sha")==sha]; print(xs[0]["html_url"] if xs else "")')
+          test -n "$BUILD_ID"
+          python3 - "$BUILD_ID" "$BUILD_URL" <<'PY' > /tmp/issue.json
+          import json, os, sys
+          run_id, url = sys.argv[1:]
+          sha = os.environ['SHA']
+          body = f"BTMobile 0.1.2 build run id: {run_id}\nCommit: {sha}\nURL: {url}\n"
+          print(json.dumps({"title": f"BTMobile 0.1.2 CI {sha[:8]}", "body": body}))
+          PY
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/$REPO/issues" \
+            --data-binary @/tmp/issue.json
