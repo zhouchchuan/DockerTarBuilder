@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - btmobile-v012-build-20260819
+  pull_request:
+    branches:
+      - master
   workflow_dispatch:
 
 jobs:
@@ -41,18 +44,18 @@ jobs:
           p = Path('source/iTorrent/Core/Assets/GoogleService-Info.plist')
           p.parent.mkdir(parents=True, exist_ok=True)
           data = {
-              'API_KEY': 'AIzaSyAEbFIIBWkytOKKoVuPppStHButfHK3HVM',
-              'BUNDLE_ID': 'com.xitrix.iTorrent2',
-              'GCM_SENDER_ID': '612867314720',
-              'GOOGLE_APP_ID': '1:612867314720:ios:0fec2b66005070d3b55845',
+              'API_KEY': 'disabled',
+              'BUNDLE_ID': 'com.mxmall123.app',
+              'GCM_SENDER_ID': '0',
+              'GOOGLE_APP_ID': '1:0:ios:0000000000000000',
               'IS_ADS_ENABLED': False,
               'IS_ANALYTICS_ENABLED': False,
-              'IS_APPINVITE_ENABLED': True,
-              'IS_GCM_ENABLED': True,
-              'IS_SIGNIN_ENABLED': True,
+              'IS_APPINVITE_ENABLED': False,
+              'IS_GCM_ENABLED': False,
+              'IS_SIGNIN_ENABLED': False,
               'PLIST_VERSION': '1',
-              'PROJECT_ID': 'itorrent-fdb49',
-              'STORAGE_BUCKET': 'itorrent-fdb49.appspot.com',
+              'PROJECT_ID': 'btmobile-local',
+              'STORAGE_BUCKET': 'btmobile-local.invalid',
           }
           with p.open('wb') as f:
               plistlib.dump(data, f)
@@ -80,6 +83,9 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
+            DEVELOPMENT_TEAM='' \
+            MARKETING_VERSION='0.1.2' \
+            CURRENT_PROJECT_VERSION='12' \
             build | tee "$RUNNER_TEMP/btmobile-build.log"
 
       - name: Package BTMobile V0.1.2 unsigned IPA
@@ -88,20 +94,20 @@ jobs:
           APP=$(find "$RUNNER_TEMP/BTMobileDerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -type d -name 'iTorrent.app' -print -quit)
           test -n "$APP"
           echo "APP=$APP"
-          rm -rf "$APP/_CodeSignature" "$APP/PlugIns" "$APP/embedded.mobileprovision"
+          rm -rf "$APP/_CodeSignature" "$APP/PlugIns" "$APP/Watch" "$APP/embedded.mobileprovision"
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName BT Mobile" "$APP/Info.plist" || true
-          /usr/libexec/PlistBuddy -c "Set :CFBundleName BT Mobile" "$APP/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName BTMobile" "$APP/Info.plist" || true
           /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.mxmall123.app" "$APP/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.2" "$APP/Info.plist"
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 0.1.2" "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 12" "$APP/Info.plist"
           mkdir -p "$RUNNER_TEMP/unsigned/Payload"
-          ditto "$APP" "$RUNNER_TEMP/unsigned/Payload/iTorrent.app"
+          ditto "$APP" "$RUNNER_TEMP/unsigned/Payload/BTMobile.app"
           cd "$RUNNER_TEMP/unsigned"
           /usr/bin/zip -qry "$RUNNER_TEMP/BTMobile_V0.1.2_UNSIGNED.ipa" Payload
           shasum -a 256 "$RUNNER_TEMP/BTMobile_V0.1.2_UNSIGNED.ipa" | tee "$RUNNER_TEMP/BTMobile_V0.1.2_UNSIGNED.sha256"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Payload/iTorrent.app/Info.plist
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Payload/iTorrent.app/Info.plist
-          file Payload/iTorrent.app/iTorrent
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Payload/BTMobile.app/Info.plist
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Payload/BTMobile.app/Info.plist
+          file Payload/BTMobile.app/iTorrent
 
       - name: Upload unsigned V0.1.2
         uses: actions/upload-artifact@v4
