@@ -104,8 +104,8 @@ jobs:
           cd build/linux
           make clean
           make
-          ./zsign -v || true
-          cp ./zsign "$RUNNER_TEMP/zsign"
+          ../../bin/zsign -v || true
+          cp ../../bin/zsign "$RUNNER_TEMP/zsign"
       - name: Upload zsign
         uses: actions/upload-artifact@v4
         with:
