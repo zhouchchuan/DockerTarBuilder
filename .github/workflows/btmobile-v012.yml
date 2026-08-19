@@ -1,0 +1,114 @@
+name: BTMobile V0.1.2 iOS Build
+
+on:
+  push:
+    branches:
+      - btmobile-v012-build-20260819
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - name: Checkout CI helper
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 26.6
+
+      - name: Checkout iTorrent source and submodules
+        run: |
+          git clone --depth 1 --recurse-submodules https://github.com/XITRIX/iTorrent.git source
+          cd source
+          git submodule update --init --recursive
+          git rev-parse HEAD
+          git submodule status --recursive
+
+      - name: Apply BTMobile V0.1.2 Peer patch
+        run: |
+          python3 scripts/btmobile_v012_patch.py
+          grep -n "peerSnapshots" source/Submodules/LibTorrent-Swift/LibTorrent/Core/TorrentHandle/TorrentHandle.h
+          grep -n "Peer 节点" source/iTorrent/Screens/TorrentDetails/TorrentDetailsViewModel.swift
+
+      - name: Prepare Firebase resource
+        run: |
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+          p = Path('source/iTorrent/Core/Assets/GoogleService-Info.plist')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          data = {
+              'API_KEY': 'AIzaSyAEbFIIBWkytOKKoVuPppStHButfHK3HVM',
+              'BUNDLE_ID': 'com.xitrix.iTorrent2',
+              'GCM_SENDER_ID': '612867314720',
+              'GOOGLE_APP_ID': '1:612867314720:ios:0fec2b66005070d3b55845',
+              'IS_ADS_ENABLED': False,
+              'IS_ANALYTICS_ENABLED': False,
+              'IS_APPINVITE_ENABLED': True,
+              'IS_GCM_ENABLED': True,
+              'IS_SIGNIN_ENABLED': True,
+              'PLIST_VERSION': '1',
+              'PROJECT_ID': 'itorrent-fdb49',
+              'STORAGE_BUCKET': 'itorrent-fdb49.appspot.com',
+          }
+          with p.open('wb') as f:
+              plistlib.dump(data, f)
+          PY
+
+      - name: Install build dependencies
+        run: brew install boost
+
+      - name: Prepare libtorrent Xcode project
+        working-directory: source
+        run: ./Submodules/LibTorrent-Swift/make.sh
+
+      - name: Build unsigned Release app
+        working-directory: source
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace iTorrent.xcworkspace \
+            -scheme iTorrent \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/BTMobileDerivedData" \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build | tee "$RUNNER_TEMP/btmobile-build.log"
+
+      - name: Package BTMobile V0.1.2 unsigned IPA
+        run: |
+          set -e
+          APP=$(find "$RUNNER_TEMP/BTMobileDerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -type d -name 'iTorrent.app' -print -quit)
+          test -n "$APP"
+          echo "APP=$APP"
+          rm -rf "$APP/_CodeSignature" "$APP/PlugIns" "$APP/embedded.mobileprovision"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName BT Mobile" "$APP/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName BT Mobile" "$APP/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.mxmall123.app" "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.2" "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 0.1.2" "$APP/Info.plist"
+          mkdir -p "$RUNNER_TEMP/unsigned/Payload"
+          ditto "$APP" "$RUNNER_TEMP/unsigned/Payload/iTorrent.app"
+          cd "$RUNNER_TEMP/unsigned"
+          /usr/bin/zip -qry "$RUNNER_TEMP/BTMobile_V0.1.2_UNSIGNED.ipa" Payload
+          shasum -a 256 "$RUNNER_TEMP/BTMobile_V0.1.2_UNSIGNED.ipa" | tee "$RUNNER_TEMP/BTMobile_V0.1.2_UNSIGNED.sha256"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Payload/iTorrent.app/Info.plist
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Payload/iTorrent.app/Info.plist
+          file Payload/iTorrent.app/iTorrent
+
+      - name: Upload unsigned V0.1.2
+        uses: actions/upload-artifact@v4
+        with:
+          name: BTMobile_V0.1.2_UNSIGNED
+          retention-days: 1
+          path: |
+            ${{ runner.temp }}/BTMobile_V0.1.2_UNSIGNED.ipa
+            ${{ runner.temp }}/BTMobile_V0.1.2_UNSIGNED.sha256
+            ${{ runner.temp }}/btmobile-build.log
