@@ -1,6 +1,6 @@
 Customer Service iOS V1.0.3 Build 6 public temporary build
-status=success
-source_commit=ff5838f37a2c5059763b3787872fb99d581efa3a
-run_id=32377120584
+status=failure
+source_commit=509ac4e6cf8f6d0ebf26aef5f3a30a43998229e8
+run_id=32377766565
 run_attempt=1
-generated_utc=2026-08-20T13:57:09Z
+generated_utc=2026-08-20T14:03:21Z
