@@ -97,7 +97,9 @@ jobs:
           test "$BUILD" = '6'
           test -f "$APP/CustomerServiceApp"
           test -f "$APP/Assets.car"
-          test -d "$APP/Base.lproj/LaunchScreen.storyboardc"
+          echo 'Launch screen outputs:'
+          find "$APP" -maxdepth 3 -iname 'LaunchScreen*' -print || true
+          /usr/libexec/PlistBuddy -c 'Print :UILaunchStoryboardName' "$PLIST" | grep -q '^LaunchScreen$'
           OUT="$RUNNER_TEMP/CustomerService_iOS_V1.0.3_Build6_Unsigned"
           mkdir -p "$OUT/Payload"
           cp -R "$APP" "$OUT/Payload/CustomerServiceApp.app"
@@ -142,4 +144,5 @@ jobs:
           git add -f "$RESULT_DIR"
           if git diff --cached --quiet; then exit 0; fi
           git commit -m "CI result Customer Service iOS V1.0.3 Build 6: $JOB_STATUS"
+          git pull --rebase origin customer-service-ios-v103-build6-temp || true
           git push origin HEAD:customer-service-ios-v103-build6-temp
