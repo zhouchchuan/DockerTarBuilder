@@ -1,0 +1,6 @@
+Customer Service iOS V1.0.4 Build 8 public temporary build
+status=failure
+source_commit=ab65ca7559f9eabf97c5b0a07bfa3340d861ae27
+run_id=32388163389
+run_attempt=1
+generated_utc=2026-08-20T15:47:04Z
