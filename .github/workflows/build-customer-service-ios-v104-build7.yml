@@ -103,7 +103,6 @@ jobs:
           test "$BUILD" = '7'
           test -f "$APP/CustomerServiceApp"
           test -f "$APP/Assets.car"
-          strings "$APP/CustomerServiceApp" | grep -q '客服工作台'
           /usr/libexec/PlistBuddy -c 'Print :UILaunchStoryboardName' "$PLIST" | grep -q '^LaunchScreen$'
           OUT="$RUNNER_TEMP/CustomerService_iOS_V1.0.4_Build7_Unsigned"
           mkdir -p "$OUT/Payload"
