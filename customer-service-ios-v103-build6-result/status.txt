@@ -1,0 +1,6 @@
+Customer Service iOS V1.0.3 Build 6 public temporary build
+status=failure
+source_commit=0abfb7754f8b42a15e19fa3a52f297e8896f9cc2
+run_id=32376604526
+run_attempt=1
+generated_utc=2026-08-20T13:51:05Z
