@@ -1,4 +1,4 @@
-name: Build LinuxServer Endpoint Alpha for DS1823xs+
+name: Build qBittorrent Precision 0.1.3 for DS1823xs+
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build Endpoint Alpha image TAR
+      - name: Build V0.1.3 image TAR
         uses: docker/build-push-action@v7
         env:
           DOCKER_BUILD_RECORD_UPLOAD: false
@@ -30,8 +30,8 @@ jobs:
           context: .
           file: docker/lsio/Dockerfile
           platforms: linux/amd64
-          tags: qbittorrent-precision:0.1.1-endpoint-alpha
-          outputs: type=docker,dest=${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64.tar
+          tags: qbittorrent-precision:0.1.3
+          outputs: type=docker,dest=${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.3-amd64.tar
           provenance: false
           sbom: false
           cache-from: type=gha,scope=precision-lsio-endpoint-amd64
@@ -41,12 +41,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          image="qbittorrent-precision:0.1.1-endpoint-alpha"
+          image="qbittorrent-precision:0.1.3"
           container="precision-lsio-smoke"
           config_dir="${RUNNER_TEMP}/precision-lsio-config"
           downloads_dir="${RUNNER_TEMP}/precision-lsio-downloads"
 
-          docker load --input "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64.tar"
+          docker load --input "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.3-amd64.tar"
           test "$(docker image inspect --format '{{.Architecture}}' "${image}")" = "amd64"
           docker run --rm --entrypoint /app/qbittorrent-nox "${image}" --version | grep -F "qBittorrent v5.2.3"
 
@@ -83,16 +83,83 @@ jobs:
           test "$(docker inspect --format '{{.State.Running}}' "${container}")" = "true"
           grep -F "LegalNotice" "${config_dir}/qBittorrent/qBittorrent.conf"
           test "$(docker image inspect --format '{{index .Config.Labels "io.qbittorrent-precision.endpoint-control"}}' "${image}")" = "ip+port"
-          sha256sum "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64.tar" \
-            > "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64.tar.sha256"
+          test "$(docker image inspect --format '{{index .Config.Labels "io.qbittorrent-precision.manual-ban-rules"}}' "${image}")" = "ip-or-ip+port"
+
+          password="$(docker logs "${container}" 2>&1 \
+            | sed -n 's/^.*temporary password is provided for this session: //p' \
+            | tail -n 1 \
+            | tr -d '\r')"
+          test -n "${password}"
+          login_result="$(curl --silent --show-error \
+            --cookie-jar "${RUNNER_TEMP}/cookies.txt" \
+            --data-urlencode 'username=admin' \
+            --data-urlencode "password=${password}" \
+            'http://127.0.0.1:19191/api/v2/auth/login')"
+          test "${login_result}" = "Ok."
+
+          curl --silent --show-error --fail-with-body \
+            --cookie "${RUNNER_TEMP}/cookies.txt" \
+            --data-urlencode 'json={"banned_IPs":"192.0.2.10:6881\n192.0.2.20\n[2001:db8::1]:6881"}' \
+            'http://127.0.0.1:19191/api/v2/app/setPreferences'
+          curl --silent --show-error --fail-with-body \
+            --cookie "${RUNNER_TEMP}/cookies.txt" \
+            --data-urlencode 'peers=192.0.2.30:6883' \
+            'http://127.0.0.1:19191/api/v2/transfer/banPeers'
+
+          curl --silent --show-error --fail-with-body \
+            --cookie "${RUNNER_TEMP}/cookies.txt" \
+            'http://127.0.0.1:19191/api/v2/app/preferences' \
+            > "${RUNNER_TEMP}/preferences.json"
+          jq -e '.banned_IPs | split("\n") | sort == ["192.0.2.10:6881", "192.0.2.20", "192.0.2.30:6883", "[2001:db8::1]:6881"]' \
+            "${RUNNER_TEMP}/preferences.json"
+
+          docker stop "${container}"
+          grep -F 'BannedIPs=192.0.2.20' "${config_dir}/qBittorrent/qBittorrent.conf"
+          grep -F 'BannedPeerEndpoints' "${config_dir}/qBittorrent/qBittorrent.conf"
+          grep -F '192.0.2.10:6881' "${config_dir}/qBittorrent/qBittorrent.conf"
+          grep -F '192.0.2.30:6883' "${config_dir}/qBittorrent/qBittorrent.conf"
+
+          docker start "${container}"
+          ready=0
+          for attempt in $(seq 1 45); do
+            test "$(docker inspect --format '{{.State.Running}}' "${container}")" = "true"
+            if curl --silent --fail --max-time 2 "http://127.0.0.1:19191/" >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "${ready}" = "1"
+
+          password="$(docker logs "${container}" 2>&1 \
+            | sed -n 's/^.*temporary password is provided for this session: //p' \
+            | tail -n 1 \
+            | tr -d '\r')"
+          test -n "${password}"
+          login_result="$(curl --silent --show-error \
+            --cookie-jar "${RUNNER_TEMP}/cookies-restart.txt" \
+            --data-urlencode 'username=admin' \
+            --data-urlencode "password=${password}" \
+            'http://127.0.0.1:19191/api/v2/auth/login')"
+          test "${login_result}" = "Ok."
+          curl --silent --show-error --fail-with-body \
+            --cookie "${RUNNER_TEMP}/cookies-restart.txt" \
+            'http://127.0.0.1:19191/api/v2/app/preferences' \
+            > "${RUNNER_TEMP}/preferences-restart.json"
+          jq -e '.banned_IPs | split("\n") | sort == ["192.0.2.10:6881", "192.0.2.20", "192.0.2.30:6883", "[2001:db8::1]:6881"]' \
+            "${RUNNER_TEMP}/preferences-restart.json"
+
+          sha256sum "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.3-amd64.tar" \
+            > "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.3-amd64.tar.sha256"
 
       - name: Upload DS1823xs+ image package
         uses: actions/upload-artifact@v4
         with:
-          name: qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64
+          name: qbittorrent-precision-ds1823xs-0.1.3-amd64
           path: |
-            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64.tar
-            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64.tar.sha256
+            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.3-amd64.tar
+            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.3-amd64.tar.sha256
           compression-level: 0
           if-no-files-found: error
           retention-days: 14
+

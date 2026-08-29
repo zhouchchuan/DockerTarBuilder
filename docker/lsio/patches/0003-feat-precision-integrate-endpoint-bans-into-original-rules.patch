@@ -1,0 +1,247 @@
+From d8387313a8abd74ce0f231bf08318db7b13dfac8 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local.invalid>
+Date: Sat, 29 Aug 2026 21:27:09 +0800
+Subject: [PATCH] feat(precision): integrate endpoint bans into original rules
+
+---
+ src/base/bittorrent/sessionimpl.cpp          | 65 +++++++++++++-------
+ src/gui/banlistoptionsdialog.cpp             | 33 ++++++----
+ src/webui/api/transfercontroller.cpp         | 18 +++++-
+ src/webui/www/private/scripts/prop-peers.js  |  2 +-
+ src/webui/www/private/views/preferences.html |  2 +-
+ 5 files changed, 81 insertions(+), 39 deletions(-)
+
+diff --git a/src/base/bittorrent/sessionimpl.cpp b/src/base/bittorrent/sessionimpl.cpp
+index aa9a818..c56e7bb 100644
+--- a/src/base/bittorrent/sessionimpl.cpp
++++ b/src/base/bittorrent/sessionimpl.cpp
+@@ -4212,38 +4212,52 @@ void SessionImpl::applyFilenameFilter(const PathList &files, QList<DownloadPrior
+ 
+ void SessionImpl::setBannedIPs(const QStringList &newList)
+ {
+-    if (newList == m_bannedIPs)
+-        return; // do nothing
+-    // here filter out incorrect IP
+-    QStringList filteredList;
+-    for (const QString &ip : newList)
+-    {
+-        if (Utils::Net::isValidIP(ip))
++    // qBittorrent Precision keeps the original IP-wide rules and accepts exact
++    // peer endpoints in the same user-facing list. Internally they remain
++    // separate because libtorrent's ip_filter cannot represent a port.
++    QStringList filteredIPs;
++    QStringList filteredEndpoints;
++    for (const QString &entry : newList)
++    {
++        const QString rule = entry.trimmed();
++        if (Utils::Net::isValidIP(rule))
+         {
+             // the same IPv6 addresses could be written in different forms;
+             // QHostAddress::toString() result format follows RFC5952;
+             // thus we avoid duplicate entries pointing to the same address
+-            filteredList << QHostAddress(ip).toString();
++            filteredIPs << QHostAddress(rule).toString();
++        }
++        else if (const PeerAddress endpoint = PeerAddress::parse(rule)
++            ; !endpoint.ip.isNull() && (endpoint.port != 0))
++        {
++            filteredEndpoints << endpoint.toString();
+         }
+         else
+         {
+-            LogMsg(tr("Rejected invalid IP address while applying the list of banned IP addresses. IP: \"%1\"")
+-                   .arg(ip)
++            LogMsg(tr("Rejected invalid IP address or peer endpoint while applying the manual ban list. Entry: \"%1\"")
++                   .arg(entry)
+                 , Log::WARNING);
+         }
+     }
+-    // now we have to sort IPs and make them unique
+-    filteredList.sort();
+-    filteredList.removeDuplicates();
+-    // Again ensure that the new list is different from the stored one.
+-    if (filteredList == m_bannedIPs)
+-        return; // do nothing
+-    // store to session settings
+-    // also here we have to recreate filter list including 3rd party ban file
+-    // and install it again into m_session
+-    m_bannedIPs = filteredList;
+-    m_IPFilteringConfigured = false;
+-    configureDeferred();
++
++    filteredIPs.sort();
++    filteredIPs.removeDuplicates();
++    filteredEndpoints.sort();
++    filteredEndpoints.removeDuplicates();
++
++    if (filteredEndpoints != m_bannedPeerEndpoints)
++    {
++        m_nativeSessionExtension->setBannedPeerEndpoints(filteredEndpoints);
++        m_bannedPeerEndpoints = filteredEndpoints;
++    }
++
++    if (filteredIPs != m_bannedIPs)
++    {
++        // Recreate the libtorrent IP filter including the third-party ban file.
++        m_bannedIPs = filteredIPs;
++        m_IPFilteringConfigured = false;
++        configureDeferred();
++    }
+ }
+ 
+ ResumeDataStorageType SessionImpl::resumeDataStorageType() const
+@@ -4288,7 +4302,12 @@ void SessionImpl::setTorrentContentRemoveOption(const TorrentContentRemoveOption
+ 
+ QStringList SessionImpl::bannedIPs() const
+ {
+-    return m_bannedIPs;
++    // Keep the original public API and settings field so existing WebUI clients
++    // can display and edit both IP-wide and exact endpoint rules.
++    QStringList rules = m_bannedIPs;
++    rules.append(m_bannedPeerEndpoints.get());
++    rules.sort();
++    return rules;
+ }
+ 
+ bool SessionImpl::isRestored() const
+diff --git a/src/gui/banlistoptionsdialog.cpp b/src/gui/banlistoptionsdialog.cpp
+index 127f047..09bbb66 100644
+--- a/src/gui/banlistoptionsdialog.cpp
++++ b/src/gui/banlistoptionsdialog.cpp
+@@ -33,6 +33,7 @@
+ #include <QSortFilterProxyModel>
+ #include <QStringListModel>
+ 
++#include "base/bittorrent/peeraddress.h"
+ #include "base/bittorrent/session.h"
+ #include "base/utils/net.h"
+ #include "ui_banlistoptionsdialog.h"
+@@ -40,6 +41,19 @@
+ 
+ #define SETTINGS_KEY(name) u"BanListOptionsDialog/" name
+ 
++namespace
++{
++    QString normalizeBanRule(const QString &input)
++    {
++        const QString rule = input.trimmed();
++        if (Utils::Net::isValidIP(rule))
++            return QHostAddress(rule).toString();
++
++        const BitTorrent::PeerAddress endpoint = BitTorrent::PeerAddress::parse(rule);
++        return (!endpoint.ip.isNull() && (endpoint.port != 0)) ? endpoint.toString() : QString {};
++    }
++}
++
+ BanListOptionsDialog::BanListOptionsDialog(QWidget *parent)
+     : QDialog(parent)
+     , m_ui(new Ui::BanListOptionsDialog)
+@@ -91,28 +105,25 @@ void BanListOptionsDialog::on_buttonBox_accepted()
+ 
+ void BanListOptionsDialog::on_buttonBanIP_clicked()
+ {
+-    QString ip = m_ui->txtIP->text();
+-    if (!Utils::Net::isValidIP(ip))
++    const QString rule = normalizeBanRule(m_ui->txtIP->text());
++    if (rule.isEmpty())
+     {
+-        QMessageBox::warning(this, tr("Warning"), tr("The entered IP address is invalid."));
++        QMessageBox::warning(this, tr("Warning"), tr("The entered IP address or peer endpoint is invalid."));
+         return;
+     }
+-    // the same IPv6 addresses could be written in different forms;
+-    // QHostAddress::toString() result format follows RFC5952;
+-    // thus we avoid duplicate entries pointing to the same address
+-    ip = QHostAddress(ip).toString();
++
+     for (int i = 0; i < m_sortFilter->rowCount(); ++i)
+     {
+         QModelIndex index = m_sortFilter->index(i, 0);
+-        if (ip == index.data().toString())
++        if (rule == index.data().toString())
+         {
+-            QMessageBox::warning(this, tr("Warning"), tr("The entered IP is already banned."));
++            QMessageBox::warning(this, tr("Warning"), tr("The entered ban rule already exists."));
+             return;
+         }
+     }
+ 
+     m_model->insertRow(m_model->rowCount());
+-    m_model->setData(m_model->index(m_model->rowCount() - 1, 0), ip);
++    m_model->setData(m_model->index(m_model->rowCount() - 1, 0), rule);
+     m_ui->txtIP->clear();
+     m_modified = true;
+ }
+@@ -132,5 +143,5 @@ void BanListOptionsDialog::on_buttonDeleteIP_clicked()
+ 
+ void BanListOptionsDialog::on_txtIP_textChanged(const QString &ip)
+ {
+-    m_ui->buttonBanIP->setEnabled(Utils::Net::isValidIP(ip));
++    m_ui->buttonBanIP->setEnabled(!normalizeBanRule(ip).isEmpty());
+ }
+diff --git a/src/webui/api/transfercontroller.cpp b/src/webui/api/transfercontroller.cpp
+index 013e230..9a61dc9 100644
+--- a/src/webui/api/transfercontroller.cpp
++++ b/src/webui/api/transfercontroller.cpp
+@@ -28,6 +28,7 @@
+ 
+ #include "transfercontroller.h"
+ 
++#include <QHostAddress>
+ #include <QJsonObject>
+ #include <QList>
+ 
+@@ -153,9 +154,20 @@ void TransferController::banPeersAction()
+     const QStringList peers = params()[u"peers"_s].split(u'|');
+     for (const QString &peer : peers)
+     {
+-        const BitTorrent::PeerAddress addr = BitTorrent::PeerAddress::parse(peer.trimmed());
+-        if (!addr.ip.isNull())
+-            BitTorrent::Session::instance()->banIP(addr.ip.toString());
++        const QString rule = peer.trimmed();
++        const BitTorrent::PeerAddress endpoint = BitTorrent::PeerAddress::parse(rule);
++        if (!endpoint.ip.isNull() && (endpoint.port != 0))
++        {
++            // Precision semantics: the original qBittorrent endpoint now bans
++            // exactly the selected IP:port instead of widening it to an IP ban.
++            BitTorrent::Session::instance()->banPeerEndpoint(endpoint);
++        }
++        else if (const QHostAddress ip {rule}; !ip.isNull())
++        {
++            // Preserve compatibility for callers that deliberately submit a
++            // plain IP address and expect the original IP-wide ban.
++            BitTorrent::Session::instance()->banIP(ip.toString());
++        }
+     }
+ 
+     setResult(QString());
+diff --git a/src/webui/www/private/scripts/prop-peers.js b/src/webui/www/private/scripts/prop-peers.js
+index e112fde..428e2d7 100644
+--- a/src/webui/www/private/scripts/prop-peers.js
++++ b/src/webui/www/private/scripts/prop-peers.js
+@@ -161,7 +161,7 @@ window.qBittorrent.PropPeers ??= (() => {
+                     return;
+ 
+                 if (confirm("QBT_TR(Are you sure you want to permanently ban the selected peers?)QBT_TR[CONTEXT=PeerListWidget]")) {
+-                    fetch("api/v2/transfer/banPeerEndpoints", {
++                    fetch("api/v2/transfer/banPeers", {
+                         method: "POST",
+                         body: new URLSearchParams({
+                             hash: torrentsTable.getCurrentTorrentID(),
+diff --git a/src/webui/www/private/views/preferences.html b/src/webui/www/private/views/preferences.html
+index 1d0628f..abc0e22 100644
+--- a/src/webui/www/private/views/preferences.html
++++ b/src/webui/www/private/views/preferences.html
+@@ -612,7 +612,7 @@
+         <div class="formRow">
+             <fieldset class="settings">
+                 <legend id="manuallyBannedIPAddressesLabel">QBT_TR(Manually banned IP addresses...)QBT_TR[CONTEXT=OptionsDialog]</legend>
+-                <textarea id="banned_IPs_textarea" aria-labelledby="manuallyBannedIPAddressesLabel" rows="5" cols="70"></textarea>
++                <textarea id="banned_IPs_textarea" aria-labelledby="manuallyBannedIPAddressesLabel" rows="5" cols="70" placeholder="IP or IP:port, one entry per line"></textarea>
+             </fieldset>
+         </div>
+     </fieldset>
+-- 
+2.53.0.windows.2
+
+
