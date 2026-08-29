@@ -1,0 +1,27 @@
+From 94b170c688940d6d955854eb220e91fab6defcf8 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local.invalid>
+Date: Sat, 29 Aug 2026 16:20:53 +0800
+Subject: [PATCH] test(precision): construct endpoint blocklist test
+
+---
+ test/testbittorrentpeerendpointblocklist.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/test/testbittorrentpeerendpointblocklist.cpp b/test/testbittorrentpeerendpointblocklist.cpp
+index d93f819..5408e0b 100644
+--- a/test/testbittorrentpeerendpointblocklist.cpp
++++ b/test/testbittorrentpeerendpointblocklist.cpp
+@@ -20,6 +20,9 @@ class TestBittorrentPeerEndpointBlocklist final : public QObject
+     Q_OBJECT
+     Q_DISABLE_COPY_MOVE(TestBittorrentPeerEndpointBlocklist)
+ 
++public:
++    TestBittorrentPeerEndpointBlocklist() = default;
++
+ private slots:
+     void testExactEndpointMatching() const
+     {
+-- 
+2.53.0.windows.2
+
+
