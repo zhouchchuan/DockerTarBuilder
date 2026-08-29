@@ -1,4 +1,4 @@
-# PeerBander Beyonder 0.0.1 架构
+# PeerBander Beyonder 0.0.2 架构
 
 ```text
 qBittorrent Precision Web API
@@ -32,4 +32,3 @@ qBittorrent Precision Web API
 - `/data/events.json`：实际写入封禁列表的事件。
 
 服务写文件时先写临时文件再原子替换，降低意外断电导致配置损坏的风险。
-

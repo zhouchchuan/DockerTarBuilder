@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Engine } from './engine.js';
+import { VERSION } from './defaults.js';
 import { Store } from './store.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -33,7 +34,7 @@ const server = http.createServer(async (request, response) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`PeerBander Beyonder 0.0.1 listening on http://${host}:${port}`);
+  console.log(`PeerBander Beyonder ${VERSION} listening on http://${host}:${port}`);
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

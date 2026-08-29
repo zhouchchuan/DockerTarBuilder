@@ -13,7 +13,7 @@ permissions:
 
 env:
   IMAGE_NAME: peerbander-beyonder
-  VERSION: 0.0.1
+  VERSION: 0.0.2
 
 jobs:
   test-and-build:
@@ -56,7 +56,7 @@ jobs:
           curl --fail --silent http://127.0.0.1:19899/ | grep -F "PeerBander Beyonder"
           curl --fail --silent -H "Authorization: Bearer ci-token" \
             http://127.0.0.1:19899/api/status | tee "${RUNNER_TEMP}/status.json"
-          jq -e '.version == "0.0.1" and .enabled == false' "${RUNNER_TEMP}/status.json"
+          jq -e '.version == "0.0.2" and .enabled == false' "${RUNNER_TEMP}/status.json"
           test -s "${RUNNER_TEMP}/pbb-data/config.json"
           test -s "${RUNNER_TEMP}/pbb-data/rules.json"
           docker rm -f pbb-ci
@@ -83,10 +83,9 @@ jobs:
       - name: Upload TAR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: peerbander-beyonder-ds1823xs-0.0.1-amd64
+          name: peerbander-beyonder-ds1823xs-0.0.2-amd64
           path: |
             dist/*.tar
             dist/*.sha256
           if-no-files-found: error
           retention-days: 14
-

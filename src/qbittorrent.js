@@ -1,3 +1,5 @@
+import { VERSION } from './defaults.js';
+
 function normalizeBaseUrl(value) {
   const url = new URL(String(value || '').trim());
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('qB 地址只支持 http 或 https');
@@ -11,12 +13,14 @@ export class QBittorrentClient {
   constructor(config) {
     this.updateConfig(config);
     this.cookie = '';
+    this.loggedIn = false;
   }
 
   updateConfig(config) {
     this.config = structuredClone(config || {});
     this.baseUrl = this.config.url ? normalizeBaseUrl(this.config.url) : null;
     this.cookie = '';
+    this.loggedIn = false;
   }
 
   isConfigured() {
@@ -36,10 +40,20 @@ export class QBittorrentClient {
       signal: AbortSignal.timeout(10_000)
     });
     const text = await response.text();
-    if (!response.ok || text.trim() !== 'Ok.') throw new Error(`qB 登录失败：HTTP ${response.status}`);
+    const reply = text.trim();
+    // qB versions and reverse proxies differ here: successful logins can be
+    // HTTP 200 + "Ok.", an empty 2xx response, or HTTP 204. A failed legacy
+    // login can still be HTTP 200 + "Fails.", so do not accept arbitrary text.
+    const acceptedReply = !reply || /^Ok\.?$/i.test(reply);
+    if (!response.ok || !acceptedReply) {
+      throw new Error(`qB 登录失败：HTTP ${response.status}${reply ? ` (${reply.slice(0, 120)})` : ''}`);
+    }
     const setCookie = response.headers.getSetCookie?.() || [response.headers.get('set-cookie')].filter(Boolean);
     this.cookie = setCookie.map((item) => item.split(';', 1)[0]).join('; ');
-    if (!this.cookie) throw new Error('qB 登录成功但没有返回会话 Cookie');
+    // When qB's localhost/subnet authentication bypass is enabled it may not
+    // return a session cookie. Mark the login complete and let the requested
+    // API endpoint verify that the bypass is actually usable.
+    this.loggedIn = true;
   }
 
   headers(extra = {}) {
@@ -48,14 +62,14 @@ export class QBittorrentClient {
       accept: 'application/json, text/plain, */*',
       origin,
       referer: `${origin}/`,
-      'user-agent': 'PeerBander-Beyonder/0.0.1',
+      'user-agent': `PeerBander-Beyonder/${VERSION}`,
       ...(this.cookie ? { cookie: this.cookie } : {}),
       ...extra
     };
   }
 
   async request(pathname, options = {}, retry = true) {
-    if (!this.cookie) await this.login();
+    if (!this.loggedIn) await this.login();
     const response = await fetch(new URL(pathname, this.baseUrl), {
       ...options,
       headers: this.headers(options.headers),
@@ -63,6 +77,7 @@ export class QBittorrentClient {
     });
     if ((response.status === 401 || response.status === 403) && retry) {
       this.cookie = '';
+      this.loggedIn = false;
       await this.login();
       return this.request(pathname, options, false);
     }

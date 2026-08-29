@@ -50,6 +50,32 @@ test('qB client logs in, reads peers and uses separate ban APIs', async (context
   assert.equal(new URLSearchParams(endpointBan.body).get('peers'), '203.0.113.8:6881');
 });
 
+test('qB client accepts HTTP 204 login without a cookie for auth-bypass setups', async (context) => {
+  let loginCount = 0;
+  const server = http.createServer((request, response) => {
+    if (request.url === '/api/v2/auth/login') {
+      loginCount += 1;
+      response.statusCode = 204;
+      return response.end();
+    }
+    if (request.url === '/api/v2/app/version') return response.end('v5.2.3');
+    response.statusCode = 404;
+    response.end('not found');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  context.after(() => server.close());
+
+  const address = server.address();
+  const client = new QBittorrentClient({
+    url: `http://127.0.0.1:${address.port}`,
+    username: 'admin',
+    password: 'secret'
+  });
+  assert.equal(await client.version(), 'v5.2.3');
+  assert.equal(await client.version(), 'v5.2.3');
+  assert.equal(loginCount, 1);
+});
+
 async function readBody(request) {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
