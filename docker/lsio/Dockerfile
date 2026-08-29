@@ -54,8 +54,10 @@ RUN git clone \
 
 COPY docker/lsio/patches/ /tmp/qbittorrent-patches/
 
-RUN git -C /source/qbittorrent apply --check /tmp/qbittorrent-patches/*.patch \
-    && git -C /source/qbittorrent apply /tmp/qbittorrent-patches/*.patch
+RUN for patch in /tmp/qbittorrent-patches/*.patch; do \
+        git -C /source/qbittorrent apply --check "${patch}"; \
+        git -C /source/qbittorrent apply "${patch}"; \
+    done
 
 WORKDIR /source/qbittorrent
 
@@ -114,3 +116,4 @@ RUN chmod 0755 /app/qbittorrent-nox \
     && /app/qbittorrent-nox --version | grep -F "qBittorrent v${QBT_UPSTREAM_VERSION}" \
     && ldd /app/qbittorrent-nox | tee /runtime-dependencies.txt \
     && ! grep -F "not found" /runtime-dependencies.txt
+
