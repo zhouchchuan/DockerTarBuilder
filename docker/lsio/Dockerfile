@@ -4,7 +4,7 @@ ARG ALPINE_VERSION=3.24
 FROM alpine:${ALPINE_VERSION} AS builder
 
 ARG LIBTORRENT_REF=v2.0.12
-ARG QBT_PRECISION_VERSION=0.1.0-lsio-base
+ARG QBT_PRECISION_VERSION=0.1.1-endpoint-alpha
 ARG QBT_UPSTREAM_VERSION=5.2.3
 ARG QBT_UPSTREAM_COMMIT=0b63c3d17373f6132ea211c9dcd4241284ccdfaf
 
@@ -52,6 +52,11 @@ RUN git clone \
         https://github.com/qbittorrent/qBittorrent.git /source/qbittorrent \
     && test "$(git -C /source/qbittorrent rev-parse HEAD)" = "${QBT_UPSTREAM_COMMIT}"
 
+COPY docker/lsio/patches/ /tmp/qbittorrent-patches/
+
+RUN git -C /source/qbittorrent apply --check /tmp/qbittorrent-patches/*.patch \
+    && git -C /source/qbittorrent apply /tmp/qbittorrent-patches/*.patch
+
 WORKDIR /source/qbittorrent
 
 RUN cmake \
@@ -62,8 +67,11 @@ RUN cmake \
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
         -DGUI=OFF \
+        -DTESTING=ON \
         -DWEBUI=ON \
     && cmake --build build --parallel \
+    && ctest --test-dir build --output-on-failure \
+        -R "testbittorrentpeer(address|endpointblocklist)" \
     && cmake --install build \
     && /usr/bin/qbittorrent-nox --version | grep -F "qBittorrent v${QBT_UPSTREAM_VERSION}" \
     && printf '%s\n' \
@@ -77,7 +85,7 @@ RUN cmake \
 FROM lscr.io/linuxserver/qbittorrent:5.2.3
 
 ARG LIBTORRENT_REF=v2.0.12
-ARG QBT_PRECISION_VERSION=0.1.0-lsio-base
+ARG QBT_PRECISION_VERSION=0.1.1-endpoint-alpha
 ARG QBT_UPSTREAM_VERSION=5.2.3
 ARG QBT_UPSTREAM_COMMIT=0b63c3d17373f6132ea211c9dcd4241284ccdfaf
 
@@ -91,7 +99,8 @@ LABEL org.opencontainers.image.title="qBittorrent Precision" \
       io.qbittorrent-precision.target="Synology DS1823xs+" \
       io.qbittorrent-precision.platform="linux/amd64" \
       io.qbittorrent-precision.upstream-version="${QBT_UPSTREAM_VERSION}" \
-      io.qbittorrent-precision.libtorrent-ref="${LIBTORRENT_REF}"
+      io.qbittorrent-precision.libtorrent-ref="${LIBTORRENT_REF}" \
+      io.qbittorrent-precision.endpoint-control="ip+port"
 
 RUN apk --no-cache add \
         libgomp \
@@ -105,5 +114,3 @@ RUN chmod 0755 /app/qbittorrent-nox \
     && /app/qbittorrent-nox --version | grep -F "qBittorrent v${QBT_UPSTREAM_VERSION}" \
     && ldd /app/qbittorrent-nox | tee /runtime-dependencies.txt \
     && ! grep -F "not found" /runtime-dependencies.txt
-
-
