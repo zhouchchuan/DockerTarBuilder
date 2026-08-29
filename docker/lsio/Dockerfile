@@ -72,8 +72,8 @@ RUN cmake \
         -DTESTING=ON \
         -DWEBUI=ON \
     && cmake --build build --parallel \
-    && ctest --test-dir build --output-on-failure \
-        -R "testbittorrentpeer(address|endpointblocklist)" \
+    && ./build/test/testbittorrentpeeraddress \
+    && ./build/test/testbittorrentpeerendpointblocklist \
     && cmake --install build \
     && /usr/bin/qbittorrent-nox --version | grep -F "qBittorrent v${QBT_UPSTREAM_VERSION}" \
     && printf '%s\n' \
