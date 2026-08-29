@@ -1,0 +1,603 @@
+From 4928168ba49f49fc6d2c78f49ed5199dcb67d650 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local.invalid>
+Date: Sat, 29 Aug 2026 16:03:07 +0800
+Subject: [PATCH] feat(precision): add exact peer endpoint bans
+
+---
+ src/base/CMakeLists.txt                       |  2 +
+ .../bittorrent/nativesessionextension.cpp     | 13 +++-
+ src/base/bittorrent/nativesessionextension.h  |  5 ++
+ .../bittorrent/nativetorrentextension.cpp     | 62 ++++++++++++++++++-
+ src/base/bittorrent/nativetorrentextension.h  | 12 +++-
+ src/base/bittorrent/peerendpointblocklist.cpp | 46 ++++++++++++++
+ src/base/bittorrent/peerendpointblocklist.h   | 32 ++++++++++
+ src/base/bittorrent/session.h                 |  4 ++
+ src/base/bittorrent/sessionimpl.cpp           | 46 ++++++++++++++
+ src/base/bittorrent/sessionimpl.h             |  4 ++
+ src/gui/properties/peerlistwidget.cpp         | 13 ++--
+ src/webui/api/transfercontroller.cpp          | 15 +++++
+ src/webui/api/transfercontroller.h            |  1 +
+ src/webui/webapplication.h                    |  1 +
+ src/webui/www/private/scripts/prop-peers.js   |  2 +-
+ test/CMakeLists.txt                           |  1 +
+ test/testbittorrentpeerendpointblocklist.cpp  | 49 +++++++++++++++
+ 17 files changed, 298 insertions(+), 10 deletions(-)
+ create mode 100644 src/base/bittorrent/peerendpointblocklist.cpp
+ create mode 100644 src/base/bittorrent/peerendpointblocklist.h
+ create mode 100644 test/testbittorrentpeerendpointblocklist.cpp
+
+diff --git a/src/base/CMakeLists.txt b/src/base/CMakeLists.txt
+index 4f792ae..c5d94fd 100644
+--- a/src/base/CMakeLists.txt
++++ b/src/base/CMakeLists.txt
+@@ -28,6 +28,7 @@ add_library(qbt_base STATIC
+     bittorrent/nativesessionextension.h
+     bittorrent/nativetorrentextension.h
+     bittorrent/peeraddress.h
++    bittorrent/peerendpointblocklist.h
+     bittorrent/peerinfo.h
+     bittorrent/portforwarderimpl.h
+     bittorrent/resumedatastorage.h
+@@ -144,6 +145,7 @@ add_library(qbt_base STATIC
+     bittorrent/nativesessionextension.cpp
+     bittorrent/nativetorrentextension.cpp
+     bittorrent/peeraddress.cpp
++    bittorrent/peerendpointblocklist.cpp
+     bittorrent/peerinfo.cpp
+     bittorrent/portforwarderimpl.cpp
+     bittorrent/resumedatastorage.cpp
+diff --git a/src/base/bittorrent/nativesessionextension.cpp b/src/base/bittorrent/nativesessionextension.cpp
+index 2386c03..7235ab2 100644
+--- a/src/base/bittorrent/nativesessionextension.cpp
++++ b/src/base/bittorrent/nativesessionextension.cpp
+@@ -48,6 +48,16 @@ bool NativeSessionExtension::isSessionListening() const
+     return m_isSessionListening;
+ }
+ 
++void NativeSessionExtension::banPeerEndpoint(const BitTorrent::PeerAddress &endpoint)
++{
++    m_peerEndpointBlocklist->add(endpoint);
++}
++
++void NativeSessionExtension::setBannedPeerEndpoints(const QStringList &endpoints)
++{
++    m_peerEndpointBlocklist->replace(endpoints);
++}
++
+ void NativeSessionExtension::added(const lt::session_handle &nativeSession)
+ {
+     m_nativeSession = nativeSession;
+@@ -60,7 +70,8 @@ lt::feature_flags_t NativeSessionExtension::implemented_features()
+ 
+ std::shared_ptr<lt::torrent_plugin> NativeSessionExtension::new_torrent(const lt::torrent_handle &torrentHandle, LTClientData clientData)
+ {
+-    return std::make_shared<NativeTorrentExtension>(torrentHandle, static_cast<ExtensionData *>(clientData));
++    return std::make_shared<NativeTorrentExtension>(torrentHandle, static_cast<ExtensionData *>(clientData)
++        , m_peerEndpointBlocklist);
+ }
+ 
+ void NativeSessionExtension::on_alert(const lt::alert *alert)
+diff --git a/src/base/bittorrent/nativesessionextension.h b/src/base/bittorrent/nativesessionextension.h
+index 28ef256..093f651 100644
+--- a/src/base/bittorrent/nativesessionextension.h
++++ b/src/base/bittorrent/nativesessionextension.h
+@@ -35,11 +35,14 @@
+ #include <QReadWriteLock>
+ 
+ #include "extensiondata.h"
++#include "peerendpointblocklist.h"
+ 
+ class NativeSessionExtension final : public lt::plugin
+ {
+ public:
+     bool isSessionListening() const;
++    void banPeerEndpoint(const BitTorrent::PeerAddress &endpoint);
++    void setBannedPeerEndpoints(const QStringList &endpoints);
+ 
+ private:
+     void added(const lt::session_handle &nativeSession) override;
+@@ -53,4 +56,6 @@ private:
+ 
+     mutable QReadWriteLock m_lock;
+     bool m_isSessionListening = false;
++    std::shared_ptr<BitTorrent::PeerEndpointBlocklist> m_peerEndpointBlocklist
++        = std::make_shared<BitTorrent::PeerEndpointBlocklist>();
+ };
+diff --git a/src/base/bittorrent/nativetorrentextension.cpp b/src/base/bittorrent/nativetorrentextension.cpp
+index e460afd..9f35688 100644
+--- a/src/base/bittorrent/nativetorrentextension.cpp
++++ b/src/base/bittorrent/nativetorrentextension.cpp
+@@ -28,11 +28,66 @@
+ 
+ #include "nativetorrentextension.h"
+ 
++#include <utility>
++
++#include <libtorrent/error_code.hpp>
++#include <libtorrent/operations.hpp>
++#include <libtorrent/peer_connection_handle.hpp>
+ #include <libtorrent/torrent_status.hpp>
+ 
+-NativeTorrentExtension::NativeTorrentExtension(const lt::torrent_handle &torrentHandle, ExtensionData *data)
++#include <QHostAddress>
++#include <QString>
++
++#include "peerendpointblocklist.h"
++
++namespace
++{
++    BitTorrent::PeerAddress fromNativeEndpoint(const lt::tcp::endpoint &endpoint)
++    {
++        return {
++            .ip = QHostAddress(QString::fromStdString(endpoint.address().to_string())),
++            .port = endpoint.port()
++        };
++    }
++
++    class NativePeerExtension final : public lt::peer_plugin
++    {
++    public:
++        NativePeerExtension(const lt::peer_connection_handle &connection
++            , std::shared_ptr<BitTorrent::PeerEndpointBlocklist> peerEndpointBlocklist)
++            : m_connection {connection}
++            , m_peerEndpointBlocklist {std::move(peerEndpointBlocklist)}
++        {
++            disconnectIfBanned();
++        }
++
++    private:
++        void tick() override
++        {
++            disconnectIfBanned();
++        }
++
++        void disconnectIfBanned()
++        {
++            if (m_connection.is_disconnecting())
++                return;
++
++            if (m_peerEndpointBlocklist->contains(fromNativeEndpoint(m_connection.remote())))
++            {
++                m_connection.disconnect(lt::errors::peer_banned, lt::operation_t::bittorrent);
++            }
++        }
++
++        lt::peer_connection_handle m_connection;
++        std::shared_ptr<BitTorrent::PeerEndpointBlocklist> m_peerEndpointBlocklist;
++    };
++}
++
++NativeTorrentExtension::NativeTorrentExtension(const lt::torrent_handle &torrentHandle, ExtensionData *data
++    , std::shared_ptr<BitTorrent::PeerEndpointBlocklist> peerEndpointBlocklist)
+     : m_torrentHandle {torrentHandle}
+     , m_data {data}
++    , m_peerEndpointBlocklist {std::move(peerEndpointBlocklist)}
+ {
+     // NOTE: `data` may not exist if a torrent is added behind the scenes to download metadata
+ 
+@@ -46,6 +101,11 @@ NativeTorrentExtension::NativeTorrentExtension(const lt::torrent_handle &torrent
+     on_state(m_data ? m_data->status.state : m_torrentHandle.status({}).state);
+ }
+ 
++std::shared_ptr<lt::peer_plugin> NativeTorrentExtension::new_connection(const lt::peer_connection_handle &connection)
++{
++    return std::make_shared<NativePeerExtension>(connection, m_peerEndpointBlocklist);
++}
++
+ NativeTorrentExtension::~NativeTorrentExtension()
+ {
+     delete m_data;
+diff --git a/src/base/bittorrent/nativetorrentextension.h b/src/base/bittorrent/nativetorrentextension.h
+index 4aed9e1..4d7107d 100644
+--- a/src/base/bittorrent/nativetorrentextension.h
++++ b/src/base/bittorrent/nativetorrentextension.h
+@@ -28,21 +28,31 @@
+ 
+ #pragma once
+ 
++#include <memory>
++
+ #include <libtorrent/extensions.hpp>
+ #include <libtorrent/torrent_handle.hpp>
+ 
+ #include "extensiondata.h"
+ 
++namespace BitTorrent
++{
++    class PeerEndpointBlocklist;
++}
++
+ class NativeTorrentExtension final : public lt::torrent_plugin
+ {
+ public:
+-    NativeTorrentExtension(const lt::torrent_handle &torrentHandle, ExtensionData *data);
++    NativeTorrentExtension(const lt::torrent_handle &torrentHandle, ExtensionData *data
++        , std::shared_ptr<BitTorrent::PeerEndpointBlocklist> peerEndpointBlocklist);
+     ~NativeTorrentExtension();
+ 
+ private:
++    std::shared_ptr<lt::peer_plugin> new_connection(const lt::peer_connection_handle &connection) override;
+     void on_state(lt::torrent_status::state_t state) override;
+ 
+     lt::torrent_handle m_torrentHandle;
+     lt::torrent_status::state_t m_state = lt::torrent_status::checking_resume_data;
+     ExtensionData *m_data = nullptr;
++    std::shared_ptr<BitTorrent::PeerEndpointBlocklist> m_peerEndpointBlocklist;
+ };
+diff --git a/src/base/bittorrent/peerendpointblocklist.cpp b/src/base/bittorrent/peerendpointblocklist.cpp
+new file mode 100644
+index 0000000..38d7e69
+--- /dev/null
++++ b/src/base/bittorrent/peerendpointblocklist.cpp
+@@ -0,0 +1,46 @@
++/*
++ * Bittorrent Client using Qt and libtorrent.
++ * Copyright (C) 2026  qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#include "peerendpointblocklist.h"
++
++#include <utility>
++
++#include <QStringList>
++
++using namespace BitTorrent;
++
++bool PeerEndpointBlocklist::contains(const PeerAddress &endpoint) const
++{
++    const QReadLocker locker {&m_lock};
++    return m_endpoints.contains(endpoint);
++}
++
++void PeerEndpointBlocklist::add(const PeerAddress &endpoint)
++{
++    if (endpoint.ip.isNull() || (endpoint.port == 0))
++        return;
++
++    const QWriteLocker locker {&m_lock};
++    m_endpoints.insert(endpoint);
++}
++
++void PeerEndpointBlocklist::replace(const QStringList &endpoints)
++{
++    QSet<PeerAddress> parsedEndpoints;
++    for (const QString &endpoint : endpoints)
++    {
++        const PeerAddress peerAddress = PeerAddress::parse(endpoint.trimmed());
++        if (!peerAddress.ip.isNull() && (peerAddress.port != 0))
++            parsedEndpoints.insert(peerAddress);
++    }
++
++    const QWriteLocker locker {&m_lock};
++    m_endpoints = std::move(parsedEndpoints);
++}
+diff --git a/src/base/bittorrent/peerendpointblocklist.h b/src/base/bittorrent/peerendpointblocklist.h
+new file mode 100644
+index 0000000..986704c
+--- /dev/null
++++ b/src/base/bittorrent/peerendpointblocklist.h
+@@ -0,0 +1,32 @@
++/*
++ * Bittorrent Client using Qt and libtorrent.
++ * Copyright (C) 2026  qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#pragma once
++
++#include <QReadWriteLock>
++#include <QSet>
++#include <QStringList>
++
++#include "peeraddress.h"
++
++namespace BitTorrent
++{
++    class PeerEndpointBlocklist final
++    {
++    public:
++        bool contains(const PeerAddress &endpoint) const;
++        void add(const PeerAddress &endpoint);
++        void replace(const QStringList &endpoints);
++
++    private:
++        mutable QReadWriteLock m_lock;
++        QSet<PeerAddress> m_endpoints;
++    };
++}
+diff --git a/src/base/bittorrent/session.h b/src/base/bittorrent/session.h
+index 1bec98a..026d0d0 100644
+--- a/src/base/bittorrent/session.h
++++ b/src/base/bittorrent/session.h
+@@ -52,6 +52,7 @@ namespace BitTorrent
+     class TorrentID;
+     class TorrentInfo;
+     struct CacheStatus;
++    struct PeerAddress;
+     struct SessionStatus;
+ 
+     enum class TorrentRemoveOption
+@@ -469,6 +470,9 @@ namespace BitTorrent
+         virtual bool isListening() const = 0;
+ 
+         virtual void banIP(const QString &ip) = 0;
++        virtual void banPeerEndpoint(const PeerAddress &endpoint) = 0;
++        virtual QStringList bannedPeerEndpoints() const = 0;
++        virtual void setBannedPeerEndpoints(const QStringList &endpoints) = 0;
+ 
+         virtual bool isKnownTorrent(const InfoHash &infoHash) const = 0;
+         virtual bool addTorrent(const TorrentDescriptor &torrentDescr, const AddTorrentParams &params = {}) = 0;
+diff --git a/src/base/bittorrent/sessionimpl.cpp b/src/base/bittorrent/sessionimpl.cpp
+index 5f3f101..aa9a818 100644
+--- a/src/base/bittorrent/sessionimpl.cpp
++++ b/src/base/bittorrent/sessionimpl.cpp
+@@ -105,6 +105,7 @@
+ #include "loadtorrentparams.h"
+ #include "lttypecast.h"
+ #include "nativesessionextension.h"
++#include "peeraddress.h"
+ #include "portforwarderimpl.h"
+ #include "resumedatastorage.h"
+ #include "torrentcontentremover.h"
+@@ -569,6 +570,7 @@ SessionImpl::SessionImpl(QObject *parent)
+     , m_isExcludedFileNamesEnabled(BITTORRENT_KEY(u"ExcludedFileNamesEnabled"_s), false)
+     , m_excludedFileNames(BITTORRENT_SESSION_KEY(u"ExcludedFileNames"_s))
+     , m_bannedIPs(u"State/BannedIPs"_s, QStringList(), Algorithm::sorted<QStringList>)
++    , m_bannedPeerEndpoints(u"State/BannedPeerEndpoints"_s, QStringList(), Algorithm::sorted<QStringList>)
+     , m_resumeDataStorageType(BITTORRENT_SESSION_KEY(u"ResumeDataStorageType"_s), ResumeDataStorageType::Legacy)
+     , m_isMergeTrackersEnabled(BITTORRENT_KEY(u"MergeTrackersEnabled"_s), false)
+     , m_isI2PEnabled {BITTORRENT_SESSION_KEY(u"I2P/Enabled"_s), false}
+@@ -1793,6 +1795,7 @@ void SessionImpl::initializeNativeSession()
+         m_nativeSession->add_extension(&lt::create_ut_pex_plugin);
+ 
+     auto nativeSessionExtension = std::make_shared<NativeSessionExtension>();
++    nativeSessionExtension->setBannedPeerEndpoints(m_bannedPeerEndpoints);
+     m_nativeSession->add_extension(nativeSessionExtension);
+     m_nativeSessionExtension = nativeSessionExtension.get();
+ }
+@@ -2487,6 +2490,49 @@ void SessionImpl::banIP(const QString &ip)
+     m_bannedIPs = bannedIPs;
+ }
+ 
++void SessionImpl::banPeerEndpoint(const PeerAddress &endpoint)
++{
++    if (endpoint.ip.isNull() || (endpoint.port == 0))
++        return;
++
++    const QString endpointString = endpoint.toString();
++    if (m_bannedPeerEndpoints.get().contains(endpointString))
++        return;
++
++    m_nativeSessionExtension->banPeerEndpoint(endpoint);
++
++    QStringList endpoints = m_bannedPeerEndpoints;
++    endpoints.append(endpointString);
++    endpoints.sort();
++    m_bannedPeerEndpoints = endpoints;
++}
++
++QStringList SessionImpl::bannedPeerEndpoints() const
++{
++    return m_bannedPeerEndpoints;
++}
++
++void SessionImpl::setBannedPeerEndpoints(const QStringList &endpoints)
++{
++    QStringList normalizedEndpoints;
++    normalizedEndpoints.reserve(endpoints.size());
++
++    for (const QString &endpoint : endpoints)
++    {
++        const PeerAddress peerAddress = PeerAddress::parse(endpoint.trimmed());
++        if (!peerAddress.ip.isNull() && (peerAddress.port != 0))
++            normalizedEndpoints.append(peerAddress.toString());
++    }
++
++    normalizedEndpoints.removeDuplicates();
++    normalizedEndpoints.sort();
++    if (normalizedEndpoints == m_bannedPeerEndpoints)
++        return;
++
++    m_nativeSessionExtension->setBannedPeerEndpoints(normalizedEndpoints);
++    m_bannedPeerEndpoints = normalizedEndpoints;
++}
++
+ // Delete a torrent from the session, given its hash
+ // and from the disk, if the corresponding deleteOption is chosen
+ bool SessionImpl::removeTorrent(const TorrentID &id, const TorrentRemoveOption deleteOption)
+diff --git a/src/base/bittorrent/sessionimpl.h b/src/base/bittorrent/sessionimpl.h
+index 0005a70..3374d01 100644
+--- a/src/base/bittorrent/sessionimpl.h
++++ b/src/base/bittorrent/sessionimpl.h
+@@ -443,6 +443,9 @@ namespace BitTorrent
+         bool isListening() const override;
+ 
+         void banIP(const QString &ip) override;
++        void banPeerEndpoint(const PeerAddress &endpoint) override;
++        QStringList bannedPeerEndpoints() const override;
++        void setBannedPeerEndpoints(const QStringList &endpoints) override;
+ 
+         bool isKnownTorrent(const InfoHash &infoHash) const override;
+         bool addTorrent(const TorrentDescriptor &torrentDescr, const AddTorrentParams &params = {}) override;
+@@ -770,6 +773,7 @@ namespace BitTorrent
+         CachedSettingValue<bool> m_isExcludedFileNamesEnabled;
+         CachedSettingValue<QStringList> m_excludedFileNames;
+         CachedSettingValue<QStringList> m_bannedIPs;
++        CachedSettingValue<QStringList> m_bannedPeerEndpoints;
+         CachedSettingValue<ResumeDataStorageType> m_resumeDataStorageType;
+         CachedSettingValue<bool> m_isMergeTrackersEnabled;
+         CachedSettingValue<bool> m_isI2PEnabled;
+diff --git a/src/gui/properties/peerlistwidget.cpp b/src/gui/properties/peerlistwidget.cpp
+index 08257f8..62979e8 100644
+--- a/src/gui/properties/peerlistwidget.cpp
++++ b/src/gui/properties/peerlistwidget.cpp
+@@ -339,14 +339,15 @@ void PeerListWidget::banSelectedPeers()
+     // Store selected rows first as selected peers may disconnect
+     const QModelIndexList selectedIndexes = selectionModel()->selectedRows();
+ 
+-    QList<QString> selectedIPs;
+-    selectedIPs.reserve(selectedIndexes.size());
++    QList<BitTorrent::PeerAddress> selectedEndpoints;
++    selectedEndpoints.reserve(selectedIndexes.size());
+ 
+     for (const QModelIndex &index : selectedIndexes)
+     {
+         const int row = m_proxyModel->mapToSource(index).row();
+         const QString ip = m_listModel->item(row, PeerListColumns::IP_HIDDEN)->text();
+-        selectedIPs += ip;
++        const ushort port = m_listModel->item(row, PeerListColumns::PORT)->text().toUShort();
++        selectedEndpoints.append({.ip = QHostAddress(ip), .port = port});
+     }
+ 
+     // Confirm before banning peer
+@@ -354,10 +355,10 @@ void PeerListWidget::banSelectedPeers()
+         , tr("Are you sure you want to permanently ban the selected peers?"));
+     if (btn != QMessageBox::Yes) return;
+ 
+-    for (const QString &ip : selectedIPs)
++    for (const BitTorrent::PeerAddress &endpoint : selectedEndpoints)
+     {
+-        BitTorrent::Session::instance()->banIP(ip);
+-        LogMsg(tr("Peer \"%1\" is manually banned").arg(ip));
++        BitTorrent::Session::instance()->banPeerEndpoint(endpoint);
++        LogMsg(tr("Peer \"%1\" is manually banned").arg(endpoint.toString()));
+     }
+     // Refresh list
+     loadPeers(m_properties->getCurrentTorrent());
+diff --git a/src/webui/api/transfercontroller.cpp b/src/webui/api/transfercontroller.cpp
+index 8ef1c58..013e230 100644
+--- a/src/webui/api/transfercontroller.cpp
++++ b/src/webui/api/transfercontroller.cpp
+@@ -160,3 +160,18 @@ void TransferController::banPeersAction()
+ 
+     setResult(QString());
+ }
++
++void TransferController::banPeerEndpointsAction()
++{
++    requireParams({u"peers"_s});
++
++    const QStringList peers = params()[u"peers"_s].split(u'|');
++    for (const QString &peer : peers)
++    {
++        const BitTorrent::PeerAddress endpoint = BitTorrent::PeerAddress::parse(peer.trimmed());
++        if (!endpoint.ip.isNull() && (endpoint.port != 0))
++            BitTorrent::Session::instance()->banPeerEndpoint(endpoint);
++    }
++
++    setResult(QString());
++}
+diff --git a/src/webui/api/transfercontroller.h b/src/webui/api/transfercontroller.h
+index fe7a016..9337dc4 100644
+--- a/src/webui/api/transfercontroller.h
++++ b/src/webui/api/transfercontroller.h
+@@ -48,4 +48,5 @@ private slots:
+     void setUploadLimitAction();
+     void setDownloadLimitAction();
+     void banPeersAction();
++    void banPeerEndpointsAction();
+ };
+diff --git a/src/webui/webapplication.h b/src/webui/webapplication.h
+index 3dedda7..68ea999 100644
+--- a/src/webui/webapplication.h
++++ b/src/webui/webapplication.h
+@@ -198,6 +198,7 @@ private:
+         {{u"torrents"_s, u"addTrackers"_s}, Http::METHOD_POST},
+         {{u"torrents"_s, u"addWebSeeds"_s}, Http::METHOD_POST},
+         {{u"transfer"_s, u"banPeers"_s}, Http::METHOD_POST},
++        {{u"transfer"_s, u"banPeerEndpoints"_s}, Http::METHOD_POST},
+         {{u"torrents"_s, u"bottomPrio"_s}, Http::METHOD_POST},
+         {{u"torrents"_s, u"createCategory"_s}, Http::METHOD_POST},
+         {{u"torrents"_s, u"createTags"_s}, Http::METHOD_POST},
+diff --git a/src/webui/www/private/scripts/prop-peers.js b/src/webui/www/private/scripts/prop-peers.js
+index 428e2d7..e112fde 100644
+--- a/src/webui/www/private/scripts/prop-peers.js
++++ b/src/webui/www/private/scripts/prop-peers.js
+@@ -161,7 +161,7 @@ window.qBittorrent.PropPeers ??= (() => {
+                     return;
+ 
+                 if (confirm("QBT_TR(Are you sure you want to permanently ban the selected peers?)QBT_TR[CONTEXT=PeerListWidget]")) {
+-                    fetch("api/v2/transfer/banPeers", {
++                    fetch("api/v2/transfer/banPeerEndpoints", {
+                         method: "POST",
+                         body: new URLSearchParams({
+                             hash: torrentsTable.getCurrentTorrentID(),
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+index 22caf6f..e60caf5 100644
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -8,6 +8,7 @@ include_directories("../src")
+ set(testFiles
+     testalgorithm.cpp
+     testbittorrentpeeraddress.cpp
++    testbittorrentpeerendpointblocklist.cpp
+     testbittorrenttrackerentry.cpp
+     testconceptsexplicitlyconvertibleto.cpp
+     testconceptsstringable.cpp
+diff --git a/test/testbittorrentpeerendpointblocklist.cpp b/test/testbittorrentpeerendpointblocklist.cpp
+new file mode 100644
+index 0000000..d93f819
+--- /dev/null
++++ b/test/testbittorrentpeerendpointblocklist.cpp
+@@ -0,0 +1,49 @@
++/*
++ * Bittorrent Client using Qt and libtorrent.
++ * Copyright (C) 2026  qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#include <QObject>
++#include <QTest>
++
++#include "base/bittorrent/peerendpointblocklist.h"
++
++using namespace Qt::Literals::StringLiterals;
++
++class TestBittorrentPeerEndpointBlocklist final : public QObject
++{
++    Q_OBJECT
++    Q_DISABLE_COPY_MOVE(TestBittorrentPeerEndpointBlocklist)
++
++private slots:
++    void testExactEndpointMatching() const
++    {
++        BitTorrent::PeerEndpointBlocklist blocklist;
++        blocklist.replace({u"1.1.1.1:1234"_s, u"[2001:db8::1]:6881"_s});
++
++        QVERIFY(blocklist.contains(BitTorrent::PeerAddress::parse(u"1.1.1.1:1234")));
++        QVERIFY(!blocklist.contains(BitTorrent::PeerAddress::parse(u"1.1.1.1:8526")));
++        QVERIFY(!blocklist.contains(BitTorrent::PeerAddress::parse(u"2.2.2.2:1234")));
++        QVERIFY(blocklist.contains(BitTorrent::PeerAddress::parse(u"[2001:db8::1]:6881")));
++        QVERIFY(!blocklist.contains(BitTorrent::PeerAddress::parse(u"[2001:db8::1]:6882")));
++    }
++
++    void testReplaceAndValidation() const
++    {
++        BitTorrent::PeerEndpointBlocklist blocklist;
++        blocklist.add(BitTorrent::PeerAddress::parse(u"1.1.1.1:1234"));
++        QVERIFY(blocklist.contains(BitTorrent::PeerAddress::parse(u"1.1.1.1:1234")));
++
++        blocklist.replace({u"invalid"_s, u"2.2.2.2:4321"_s, u"2.2.2.2:4321"_s});
++        QVERIFY(!blocklist.contains(BitTorrent::PeerAddress::parse(u"1.1.1.1:1234")));
++        QVERIFY(blocklist.contains(BitTorrent::PeerAddress::parse(u"2.2.2.2:4321")));
++    }
++};
++
++QTEST_APPLESS_MAIN(TestBittorrentPeerEndpointBlocklist)
++#include "testbittorrentpeerendpointblocklist.moc"
+-- 
+2.53.0.windows.2
+
