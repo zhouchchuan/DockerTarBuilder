@@ -85,29 +85,44 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "io.qbittorrent-precision.endpoint-control"}}' "${image}")" = "ip+port"
           test "$(docker image inspect --format '{{index .Config.Labels "io.qbittorrent-precision.manual-ban-rules"}}' "${image}")" = "ip-or-ip+port"
 
-          password="$(docker logs "${container}" 2>&1 \
-            | sed -n 's/^.*temporary password is provided for this session: //p' \
-            | tail -n 1 \
-            | tr -d '\r')"
-          test -n "${password}"
-          login_result="$(curl --silent --show-error \
-            --cookie-jar "${RUNNER_TEMP}/cookies.txt" \
-            --data-urlencode 'username=admin' \
-            --data-urlencode "password=${password}" \
-            'http://127.0.0.1:19191/api/v2/auth/login')"
-          test "${login_result}" = "Ok."
+          # Enable an authentication bypass only for the CI runner's loopback
+          # address. This avoids depending on LinuxServer's presentation of the
+          # random first-start password and does not change image defaults.
+          docker stop "${container}"
+          awk '
+            /^\[Preferences\]$/ {
+              print
+              print "WebUI\\AuthSubnetWhitelist=127.0.0.1/32"
+              print "WebUI\\AuthSubnetWhitelistEnabled=true"
+              next
+            }
+            { print }
+          ' "${config_dir}/qBittorrent/qBittorrent.conf" \
+            > "${RUNNER_TEMP}/qBittorrent.conf"
+          mv "${RUNNER_TEMP}/qBittorrent.conf" "${config_dir}/qBittorrent/qBittorrent.conf"
+          chown 1000:1000 "${config_dir}/qBittorrent/qBittorrent.conf"
+          grep -F 'WebUI\AuthSubnetWhitelist=127.0.0.1/32' "${config_dir}/qBittorrent/qBittorrent.conf"
+          grep -F 'WebUI\AuthSubnetWhitelistEnabled=true' "${config_dir}/qBittorrent/qBittorrent.conf"
+          docker start "${container}"
+          ready=0
+          for attempt in $(seq 1 45); do
+            test "$(docker inspect --format '{{.State.Running}}' "${container}")" = "true"
+            if curl --silent --fail --max-time 2 "http://127.0.0.1:19191/api/v2/app/version" >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "${ready}" = "1"
 
           curl --silent --show-error --fail-with-body \
-            --cookie "${RUNNER_TEMP}/cookies.txt" \
             --data-urlencode 'json={"banned_IPs":"192.0.2.10:6881\n192.0.2.20\n[2001:db8::1]:6881"}' \
             'http://127.0.0.1:19191/api/v2/app/setPreferences'
           curl --silent --show-error --fail-with-body \
-            --cookie "${RUNNER_TEMP}/cookies.txt" \
             --data-urlencode 'peers=192.0.2.30:6883' \
             'http://127.0.0.1:19191/api/v2/transfer/banPeers'
 
           curl --silent --show-error --fail-with-body \
-            --cookie "${RUNNER_TEMP}/cookies.txt" \
             'http://127.0.0.1:19191/api/v2/app/preferences' \
             > "${RUNNER_TEMP}/preferences.json"
           jq -e '.banned_IPs | split("\n") | sort == ["192.0.2.10:6881", "192.0.2.20", "192.0.2.30:6883", "[2001:db8::1]:6881"]' \
@@ -131,19 +146,7 @@ jobs:
           done
           test "${ready}" = "1"
 
-          password="$(docker logs "${container}" 2>&1 \
-            | sed -n 's/^.*temporary password is provided for this session: //p' \
-            | tail -n 1 \
-            | tr -d '\r')"
-          test -n "${password}"
-          login_result="$(curl --silent --show-error \
-            --cookie-jar "${RUNNER_TEMP}/cookies-restart.txt" \
-            --data-urlencode 'username=admin' \
-            --data-urlencode "password=${password}" \
-            'http://127.0.0.1:19191/api/v2/auth/login')"
-          test "${login_result}" = "Ok."
           curl --silent --show-error --fail-with-body \
-            --cookie "${RUNNER_TEMP}/cookies-restart.txt" \
             'http://127.0.0.1:19191/api/v2/app/preferences' \
             > "${RUNNER_TEMP}/preferences-restart.json"
           jq -e '.banned_IPs | split("\n") | sort == ["192.0.2.10:6881", "192.0.2.20", "192.0.2.30:6883", "[2001:db8::1]:6881"]' \
