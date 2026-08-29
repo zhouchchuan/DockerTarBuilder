@@ -1,0 +1,92 @@
+name: Build PeerBander Beyonder DS1823xs TAR
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - peerbander-beyonder
+    tags:
+      - "peerbander-beyonder-v*"
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: peerbander-beyonder
+  VERSION: 0.0.1
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Syntax and unit tests
+        run: |
+          node --check src/server.js
+          node --check public/app.js
+          npm test
+
+      - name: Build linux/amd64 image
+        run: |
+          docker build --platform linux/amd64 \
+            --build-arg VERSION="${VERSION}" \
+            -t "${IMAGE_NAME}:${VERSION}" .
+          test "$(docker image inspect "${IMAGE_NAME}:${VERSION}" --format '{{.Architecture}}')" = "amd64"
+
+      - name: Container smoke and persistence test
+        run: |
+          mkdir -p "${RUNNER_TEMP}/pbb-data"
+          docker run -d --name pbb-ci --network host \
+            -e PBB_WEBUI_PORT=19899 \
+            -e PBB_ADMIN_TOKEN=ci-token \
+            -v "${RUNNER_TEMP}/pbb-data:/data" \
+            "${IMAGE_NAME}:${VERSION}"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:19899/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:19899/ | grep -F "PeerBander Beyonder"
+          curl --fail --silent -H "Authorization: Bearer ci-token" \
+            http://127.0.0.1:19899/api/status | tee "${RUNNER_TEMP}/status.json"
+          jq -e '.version == "0.0.1" and .enabled == false' "${RUNNER_TEMP}/status.json"
+          test -s "${RUNNER_TEMP}/pbb-data/config.json"
+          test -s "${RUNNER_TEMP}/pbb-data/rules.json"
+          docker rm -f pbb-ci
+          docker run -d --name pbb-ci-restart --network host \
+            -e PBB_WEBUI_PORT=19899 \
+            -e PBB_ADMIN_TOKEN=ci-token \
+            -v "${RUNNER_TEMP}/pbb-data:/data" \
+            "${IMAGE_NAME}:${VERSION}"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent -H "Authorization: Bearer ci-token" \
+              http://127.0.0.1:19899/api/status >/dev/null; then break; fi
+            sleep 1
+          done
+          docker rm -f pbb-ci-restart
+
+      - name: Export Synology TAR
+        run: |
+          mkdir -p dist
+          file="dist/peerbander-beyonder-ds1823xs-${VERSION}-amd64.tar"
+          docker save --output "$file" "${IMAGE_NAME}:${VERSION}"
+          sha256sum "$file" > "${file}.sha256"
+          ls -lh dist
+
+      - name: Upload TAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: peerbander-beyonder-ds1823xs-0.0.1-amd64
+          path: |
+            dist/*.tar
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+

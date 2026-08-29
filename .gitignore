@@ -1,2 +1,6 @@
+.local-test-data/
+data/
+dist/
+*.tar
+*.tar.sha256
 
-.DS_Store

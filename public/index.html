@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PeerBander Beyonder</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="mark">PB</span><strong>PeerBander Beyonder</strong><small>0.0.1</small></div>
+    <nav>
+      <button data-tab="dashboard" class="active">状态</button>
+      <button data-tab="events">封禁记录</button>
+      <button data-tab="rules">规则管理</button>
+      <button data-tab="settings">设置</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="message" class="message hidden"></section>
+
+    <section id="dashboard" class="tab active">
+      <div class="title-row">
+        <div><h1>运行状态</h1><p>纯吸血客户端封 IP；迅雷只封当前 IP:端口。</p></div>
+        <button id="scanNow" class="primary">立即检查</button>
+      </div>
+      <div class="cards">
+        <article><label>服务状态</label><strong id="serviceState">—</strong></article>
+        <article><label>qB 连接</label><strong id="qbState">—</strong></article>
+        <article><label>检查次数</label><strong id="scanCount">0</strong></article>
+        <article><label>当前 Peers</label><strong id="peerCount">0</strong></article>
+        <article><label>整 IP 封禁</label><strong id="ipBanCount">0</strong></article>
+        <article><label>精准 Endpoint 封禁</label><strong id="endpointBanCount">0</strong></article>
+      </div>
+      <article class="panel">
+        <h2>最近一次检查</h2>
+        <dl class="details">
+          <dt>qB 版本</dt><dd id="qbVersion">—</dd>
+          <dt>活动种子</dt><dd id="torrentCount">0</dd>
+          <dt>最后检查</dt><dd id="lastScanAt">—</dd>
+          <dt>最后错误</dt><dd id="lastError">无</dd>
+        </dl>
+      </article>
+      <article class="panel">
+        <h2>当前连接与判断</h2>
+        <div class="table-wrap"><table><thead><tr><th>Endpoint</th><th>客户端</th><th>PeerID</th><th>种子</th><th>判断</th></tr></thead><tbody id="peerRows"></tbody></table></div>
+      </article>
+    </section>
+
+    <section id="events" class="tab">
+      <div class="title-row"><div><h1>封禁记录</h1><p>记录实际写入 qB 封禁列表的目标。</p></div><button id="clearEvents" class="danger">清空记录</button></div>
+      <article class="panel"><div class="table-wrap"><table><thead><tr><th>时间</th><th>封禁目标</th><th>类型</th><th>客户端</th><th>PeerID</th><th>原因</th></tr></thead><tbody id="eventRows"></tbody></table></div></article>
+    </section>
+
+    <section id="rules" class="tab">
+      <div class="title-row"><div><h1>规则管理</h1><p>支持 client、peerId、IP；动作支持放行、观察、整 IP、精准 Endpoint。</p></div><button id="saveRules" class="primary">保存规则</button></div>
+      <article class="panel">
+        <p class="hint">第一版使用 JSON 编辑器。规则优先级数值越大越先匹配；明确 Allow 永远优先于迅雷内置精准规则。</p>
+        <textarea id="rulesEditor" spellcheck="false"></textarea>
+      </article>
+    </section>
+
+    <section id="settings" class="tab">
+      <div class="title-row"><div><h1>设置</h1><p>连接 qBittorrent Precision Web API。</p></div><button id="saveConfig" class="primary">保存设置</button></div>
+      <article class="panel form-grid">
+        <label>启用自动检查<input id="enabled" type="checkbox"></label>
+        <label>qB WebUI 地址<input id="qbUrl" placeholder="http://192.168.50.82:9191"></label>
+        <label>qB 用户名<input id="qbUsername" autocomplete="username"></label>
+        <label>qB 密码<input id="qbPassword" type="password" autocomplete="current-password" placeholder="留空表示保持原密码"></label>
+        <label>检查间隔（秒）<input id="scanInterval" type="number" min="2" max="300"></label>
+        <label>重复记录冷却（秒）<input id="decisionCooldown" type="number" min="30" max="86400"></label>
+        <div class="form-actions"><button id="testConnection">测试 qB 连接</button></div>
+      </article>
+      <article class="panel notice">
+        <h2>群晖部署要求</h2>
+        <p>容器必须使用 host 网络；qB WebUI 地址填写群晖局域网 IP 和实际端口。迅雷精准封禁要求 qBittorrent Precision 0.1.3 或更高版本。</p>
+      </article>
+    </section>
+  </main>
+
+  <dialog id="tokenDialog">
+    <form method="dialog">
+      <h2>管理令牌</h2><p>此容器启用了 PBB_ADMIN_TOKEN，请输入令牌。</p>
+      <input id="tokenInput" type="password" autocomplete="current-password">
+      <button id="saveToken" class="primary">继续</button>
+    </form>
+  </dialog>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "peerbander-beyonder",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Precision peer control companion for qBittorrent Precision",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
