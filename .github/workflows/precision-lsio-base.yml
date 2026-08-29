@@ -1,0 +1,98 @@
+name: Build LinuxServer-based DS1823xs+ image TAR
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - qbittorrent-precision-lsio
+    paths:
+      - docker/lsio/**
+      - .github/workflows/precision-lsio-base.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build-amd64-tar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build DS1823xs+ image TAR
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          file: docker/lsio/Dockerfile
+          platforms: linux/amd64
+          tags: qbittorrent-precision:0.1.0-lsio-base
+          outputs: type=docker,dest=${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64.tar
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=precision-lsio-base-amd64
+          cache-to: type=gha,mode=max,scope=precision-lsio-base-amd64
+
+      - name: Verify image and LinuxServer runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="qbittorrent-precision:0.1.0-lsio-base"
+          container="precision-lsio-smoke"
+          config_dir="${RUNNER_TEMP}/precision-lsio-config"
+          downloads_dir="${RUNNER_TEMP}/precision-lsio-downloads"
+
+          docker load --input "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64.tar"
+          test "$(docker image inspect --format '{{.Architecture}}' "${image}")" = "amd64"
+          docker run --rm --entrypoint /app/qbittorrent-nox "${image}" --version | grep -F "qBittorrent v5.2.3"
+
+          mkdir -p "${config_dir}" "${downloads_dir}"
+          docker run --detach \
+            --name "${container}" \
+            --network host \
+            --env PUID=1000 \
+            --env PGID=1000 \
+            --env TZ=Etc/UTC \
+            --env WEBUI_PORT=19191 \
+            --env TORRENTING_PORT=32851 \
+            --volume "${config_dir}:/config" \
+            --volume "${downloads_dir}:/downloads" \
+            "${image}"
+
+          cleanup() {
+            docker rm --force "${container}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for attempt in $(seq 1 45); do
+            test "$(docker inspect --format '{{.State.Running}}' "${container}")" = "true"
+            if curl --silent --fail --max-time 2 "http://127.0.0.1:19191/" >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "${ready}" = "1"
+
+          sleep 10
+          test "$(docker inspect --format '{{.State.Running}}' "${container}")" = "true"
+          grep -F "LegalNotice" "${config_dir}/qBittorrent/qBittorrent.conf"
+          sha256sum "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64.tar" \
+            > "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64.tar.sha256"
+
+      - name: Upload DS1823xs+ image package
+        uses: actions/upload-artifact@v4
+        with:
+          name: qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64
+          path: |
+            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64.tar
+            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64.tar.sha256
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
