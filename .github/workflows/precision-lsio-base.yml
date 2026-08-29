@@ -1,13 +1,7 @@
-name: Build LinuxServer-based DS1823xs+ image TAR
+name: Build LinuxServer Endpoint Alpha for DS1823xs+
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - qbittorrent-precision-lsio
-    paths:
-      - docker/lsio/**
-      - .github/workflows/precision-lsio-base.yml
 
 permissions:
   contents: read
@@ -22,7 +16,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build DS1823xs+ image TAR
+      - name: Build Endpoint Alpha image TAR
         uses: docker/build-push-action@v7
         env:
           DOCKER_BUILD_RECORD_UPLOAD: false
@@ -30,23 +24,23 @@ jobs:
           context: .
           file: docker/lsio/Dockerfile
           platforms: linux/amd64
-          tags: qbittorrent-precision:0.1.0-lsio-base
-          outputs: type=docker,dest=${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64.tar
+          tags: qbittorrent-precision:0.1.1-endpoint-alpha
+          outputs: type=docker,dest=${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64.tar
           provenance: false
           sbom: false
-          cache-from: type=gha,scope=precision-lsio-base-amd64
-          cache-to: type=gha,mode=max,scope=precision-lsio-base-amd64
+          cache-from: type=gha,scope=precision-lsio-endpoint-amd64
+          cache-to: type=gha,mode=max,scope=precision-lsio-endpoint-amd64
 
       - name: Verify image and LinuxServer runtime
         shell: bash
         run: |
           set -euo pipefail
-          image="qbittorrent-precision:0.1.0-lsio-base"
+          image="qbittorrent-precision:0.1.1-endpoint-alpha"
           container="precision-lsio-smoke"
           config_dir="${RUNNER_TEMP}/precision-lsio-config"
           downloads_dir="${RUNNER_TEMP}/precision-lsio-downloads"
 
-          docker load --input "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64.tar"
+          docker load --input "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64.tar"
           test "$(docker image inspect --format '{{.Architecture}}' "${image}")" = "amd64"
           docker run --rm --entrypoint /app/qbittorrent-nox "${image}" --version | grep -F "qBittorrent v5.2.3"
 
@@ -82,17 +76,17 @@ jobs:
           sleep 10
           test "$(docker inspect --format '{{.State.Running}}' "${container}")" = "true"
           grep -F "LegalNotice" "${config_dir}/qBittorrent/qBittorrent.conf"
-          sha256sum "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64.tar" \
-            > "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64.tar.sha256"
+          test "$(docker image inspect --format '{{index .Config.Labels "io.qbittorrent-precision.endpoint-control"}}' "${image}")" = "ip+port"
+          sha256sum "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64.tar" \
+            > "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64.tar.sha256"
 
       - name: Upload DS1823xs+ image package
         uses: actions/upload-artifact@v4
         with:
-          name: qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64
+          name: qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64
           path: |
-            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64.tar
-            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.0-lsio-base-amd64.tar.sha256
+            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64.tar
+            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.1-endpoint-alpha-amd64.tar.sha256
           compression-level: 0
           if-no-files-found: error
           retention-days: 14
-
