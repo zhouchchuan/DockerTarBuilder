@@ -13,7 +13,7 @@ permissions:
 
 env:
   IMAGE_NAME: peerbander-beyonder
-  VERSION: 0.0.3
+  VERSION: 0.0.4
 
 jobs:
   test-and-build:
@@ -35,6 +35,7 @@ jobs:
           node --check src/behavior.js
           node --check src/store.js
           node --check public/app.js
+          node --check public/id.js
           npm test
 
       - name: Build linux/amd64 image
@@ -59,7 +60,7 @@ jobs:
           curl --fail --silent http://127.0.0.1:19899/ | grep -F "PeerBander Beyonder"
           curl --fail --silent -H "Authorization: Bearer ci-token" \
             http://127.0.0.1:19899/api/status | tee "${RUNNER_TEMP}/status.json"
-          jq -e '.version == "0.0.3" and .enabled == false' "${RUNNER_TEMP}/status.json"
+          jq -e '.version == "0.0.4" and .enabled == false' "${RUNNER_TEMP}/status.json"
           curl --fail --silent -H "Authorization: Bearer ci-token" \
             http://127.0.0.1:19899/api/analytics | jq -e '.monthlyUniqueIPs == 0'
           test -s "${RUNNER_TEMP}/pbb-data/config.json"
@@ -89,7 +90,7 @@ jobs:
       - name: Upload TAR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: peerbander-beyonder-ds1823xs-0.0.3-amd64
+          name: peerbander-beyonder-ds1823xs-0.0.4-amd64
           path: |
             dist/*.tar
             dist/*.sha256

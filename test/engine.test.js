@@ -49,6 +49,30 @@ test('expired bans are removed from their downloader and history is marked', asy
   assert.ok(store.events[0].unbannedAt);
 });
 
+test('missing qB ban is reconciled and a matching Gopeed peer is banned again', async () => {
+  const store = fixtureStore();
+  store.config.downloaders = [{ id: 'd1', name: 'qB 1', enabled: true, url: 'http://127.0.0.1:1', username: 'a', password: 'b' }];
+  store.rules = [{ id: 'gopeed', enabled: true, priority: 120, field: 'client', operator: 'equals', pattern: 'Gopeed dev', action: 'block_ip', comment: 'pure' }];
+  store.runtime.activeBans = [{ eventId: 'old', downloaderId: 'd1', target: '114.224.193.248', expiresAt: '2026-09-06T00:00:00.000Z' }];
+  store.events = [{ id: 'old' }];
+  const calls = [];
+  let marked = [];
+  store.markEventsUnbanned = async (ids) => { marked = ids; };
+  const engine = new Engine(store);
+  const client = fakeClient([
+    { ip: '114.224.193.248', port: 20066, client: 'Gopeed dev', peerId: '', progress: 0, uploaded: 152_000_000 }
+  ], calls, []);
+  client.bannedPeers = async () => [];
+  engine.clients.set('d1', client);
+
+  const result = await engine.scan();
+  assert.equal(result.ok, true);
+  assert.deepEqual(marked, ['old']);
+  assert.deepEqual(calls, ['114.224.193.248']);
+  assert.equal(store.runtime.activeBans.length, 1);
+  assert.notEqual(store.runtime.activeBans[0].eventId, 'old');
+});
+
 test('analytics reports rolling unique IPs, client bytes and peer categories', () => {
   const store = fixtureStore();
   const now = Date.parse('2026-08-30T00:00:00.000Z');
@@ -90,6 +114,7 @@ function fakeClient(peers, ipCalls, endpointCalls) {
     updateConfig() {}, version: async () => 'v5.2.3',
     torrents: async () => [{ hash: 'a', name: 'fixture', size: 1_000_000_000, total_size: 1_000_000_000 }],
     peers: async () => peers,
+    bannedPeers: async () => [],
     banIPs: async (values) => ipCalls.push(...values),
     banEndpoints: async (values) => endpointCalls.push(...values),
     removeBans: async () => {}

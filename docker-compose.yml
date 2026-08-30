@@ -1,6 +1,6 @@
 services:
   peerbander-beyonder:
-    image: peerbander-beyonder:0.0.3
+    image: peerbander-beyonder:0.0.4
     container_name: peerbander-beyonder
     network_mode: host
     restart: unless-stopped

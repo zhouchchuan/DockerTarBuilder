@@ -1,4 +1,4 @@
-export const VERSION = '0.0.3';
+export const VERSION = '0.0.4';
 
 export const DEFAULT_CONFIG = Object.freeze({
   schemaVersion: 3,

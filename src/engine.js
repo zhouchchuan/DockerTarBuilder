@@ -225,6 +225,7 @@ export class Engine {
 
   async scanDownloader(config, client, now) {
     const qbVersion = await client.version();
+    await this.reconcileActiveBans(config.id, client, now);
     const torrents = await client.torrents();
     const peerGroups = await mapLimit(torrents, 6, async (torrent) => ({
       torrent,
@@ -345,6 +346,22 @@ export class Engine {
       clientFamily: family,
       category
     };
+  }
+
+  async reconcileActiveBans(downloaderId, client, now) {
+    const tracked = this.store.runtime.activeBans.filter((ban) => ban.downloaderId === downloaderId);
+    if (!tracked.length) return;
+    const actual = new Set(await client.bannedPeers());
+    const missing = tracked.filter((ban) => !actual.has(ban.target));
+    if (!missing.length) return;
+
+    const missingSet = new Set(missing);
+    this.store.runtime.activeBans = this.store.runtime.activeBans.filter((ban) => !missingSet.has(ban));
+    const timestamp = new Date(now).toISOString();
+    await Promise.all([
+      this.store.markEventsUnbanned(missing.map((ban) => ban.eventId), timestamp),
+      this.store.saveRuntime()
+    ]);
   }
 
   async expireBans(now = Date.now()) {

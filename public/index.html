@@ -8,7 +8,7 @@
 </head>
 <body>
   <header>
-    <div class="brand"><span class="mark">PB</span><strong>PeerBander Beyonder</strong><small>0.0.3</small></div>
+    <div class="brand"><span class="mark">PB</span><strong>PeerBander Beyonder</strong><small>0.0.4</small></div>
     <nav>
       <button data-tab="dashboard" class="active">状态</button>
       <button data-tab="events">封禁记录</button>
@@ -63,7 +63,7 @@
     <section id="analytics" class="tab">
       <div class="title-row"><div><h1>数据分析</h1><p>客户端传输占比、当前 Peer 类型及近31天独立连接 IP。</p></div><button id="refreshAnalytics">刷新</button></div>
       <div class="chart-grid">
-        <article class="panel chart-panel"><h2>不同客户端获取数据占比</h2><p class="hint">统计 0.0.3 开始运行后，本下载器向各客户端实际上传的数据。</p><div class="chart-body"><div id="clientChart" class="donut"><span>暂无数据</span></div><div id="clientLegend" class="legend"></div></div></article>
+        <article class="panel chart-panel"><h2>不同客户端获取数据占比</h2><p class="hint">统计启用数据分析后，本下载器向各客户端实际上传的数据。</p><div class="chart-body"><div id="clientChart" class="donut"><span>暂无数据</span></div><div id="clientLegend" class="legend"></div></div></article>
         <article class="panel chart-panel"><h2>当前 Peer 类型占比</h2><p class="hint">正常客户端、吸血客户端与迅雷客户端分开统计。</p><div class="chart-body"><div id="peerChart" class="donut"><span>暂无数据</span></div><div id="peerLegend" class="legend"></div></div></article>
       </div>
       <article class="panel"><h2>近31天独立 IP</h2><div class="big-number"><strong id="analyticsUniqueIPs">0</strong><span>去重后的公网 IP</span></div><div id="uniqueByDownloader" class="downloader-status"></div></article>

@@ -1,4 +1,4 @@
-# PeerBander Beyonder 0.0.3 架构
+# PeerBander Beyonder 0.0.4 架构
 
 ```text
 多个 qBittorrent Precision Web API

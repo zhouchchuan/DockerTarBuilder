@@ -1,3 +1,5 @@
+import { createClientId } from './id.js';
+
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const COLORS = ['#4c82ff', '#2ecc71', '#f4b942', '#ff5964', '#b07cff', '#23b7c9', '#ff8a4c', '#7d8da8', '#e861a6', '#84cc5b'];
@@ -163,7 +165,7 @@ function collectRules() {
   return $$('#ruleRows tr[data-index]').map((row) => {
     const previous = rules[Number(row.dataset.index)] || {};
     return {
-      id: previous.id || crypto.randomUUID(), enabled: row.querySelector('.r-enabled').checked,
+      id: previous.id || createClientId('rule'), enabled: row.querySelector('.r-enabled').checked,
       priority: Number(row.querySelector('.r-priority').value), field: row.querySelector('.r-field').value,
       operator: row.querySelector('.r-operator').value, pattern: row.querySelector('.r-pattern').value.trim(),
       action: row.querySelector('.r-action').value, comment: row.querySelector('.r-comment').value.trim()
@@ -214,7 +216,7 @@ $('#saveConfig').addEventListener('click', async () => {
 
 $('#addDownloader').addEventListener('click', () => {
   downloaders = collectDownloaders();
-  downloaders.push({ id: crypto.randomUUID(), name: `qB下载器 ${downloaders.length + 1}`, enabled: true, url: '', username: '', password: '' });
+  downloaders.push({ id: createClientId('downloader'), name: `qB下载器 ${downloaders.length + 1}`, enabled: true, url: '', username: '', password: '' });
   renderDownloaders();
 });
 
@@ -232,7 +234,7 @@ $('#downloaderEditors').addEventListener('click', async (event) => {
 
 $('#addRule').addEventListener('click', () => {
   rules = collectRules();
-  rules.push({ id: crypto.randomUUID(), enabled: true, priority: 100, field: 'client', operator: 'startsWith', pattern: '', action: 'block_ip', comment: '' });
+  rules.push({ id: createClientId('rule'), enabled: true, priority: 100, field: 'client', operator: 'startsWith', pattern: '', action: 'block_ip', comment: '' });
   renderRules();
 });
 
