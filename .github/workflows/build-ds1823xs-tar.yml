@@ -13,7 +13,7 @@ permissions:
 
 env:
   IMAGE_NAME: peerbander-beyonder
-  VERSION: 0.0.2
+  VERSION: 0.0.3
 
 jobs:
   test-and-build:
@@ -31,6 +31,9 @@ jobs:
       - name: Syntax and unit tests
         run: |
           node --check src/server.js
+          node --check src/engine.js
+          node --check src/behavior.js
+          node --check src/store.js
           node --check public/app.js
           npm test
 
@@ -56,9 +59,12 @@ jobs:
           curl --fail --silent http://127.0.0.1:19899/ | grep -F "PeerBander Beyonder"
           curl --fail --silent -H "Authorization: Bearer ci-token" \
             http://127.0.0.1:19899/api/status | tee "${RUNNER_TEMP}/status.json"
-          jq -e '.version == "0.0.2" and .enabled == false' "${RUNNER_TEMP}/status.json"
+          jq -e '.version == "0.0.3" and .enabled == false' "${RUNNER_TEMP}/status.json"
+          curl --fail --silent -H "Authorization: Bearer ci-token" \
+            http://127.0.0.1:19899/api/analytics | jq -e '.monthlyUniqueIPs == 0'
           test -s "${RUNNER_TEMP}/pbb-data/config.json"
           test -s "${RUNNER_TEMP}/pbb-data/rules.json"
+          test -s "${RUNNER_TEMP}/pbb-data/runtime.json"
           docker rm -f pbb-ci
           docker run -d --name pbb-ci-restart --network host \
             -e PBB_WEBUI_PORT=19899 \
@@ -83,7 +89,7 @@ jobs:
       - name: Upload TAR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: peerbander-beyonder-ds1823xs-0.0.2-amd64
+          name: peerbander-beyonder-ds1823xs-0.0.3-amd64
           path: |
             dist/*.tar
             dist/*.sha256

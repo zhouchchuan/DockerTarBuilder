@@ -1,20 +1,24 @@
-export const VERSION = '0.0.2';
+export const VERSION = '0.0.3';
 
 export const DEFAULT_CONFIG = Object.freeze({
+  schemaVersion: 3,
   enabled: false,
   scanIntervalSeconds: 5,
   eventLimit: 5000,
   decisionCooldownSeconds: 600,
+  banDurationDays: 7,
   qbittorrent: {
     url: '',
     username: '',
     password: ''
   },
+  downloaders: [],
   behavior: {
     enabled: false,
+    xunleiProtectionEnabled: true,
     minimumUploadedBytes: 50_000_000,
-    maximumUploadDownloadRatio: 1.5,
-    progressRewindPercent: 7
+    excessProgressPercent: 10,
+    progressRewindPercent: 10
   }
 });
 
@@ -45,6 +49,21 @@ export const DEFAULT_RULES = Object.freeze([
     id: 'peerid-rn000', enabled: true, priority: 100,
     field: 'peerId', operator: 'contains', pattern: '-rn0.0.0',
     action: 'block_ip', comment: '已知纯吸血 PeerID -rn0.0.0'
+  },
+  {
+    id: 'client-gopeed-dev-exact', enabled: true, priority: 120,
+    field: 'client', operator: 'equals', pattern: 'Gopeed dev',
+    action: 'block_ip', comment: '已知纯吸血客户端 Gopeed dev'
+  },
+  {
+    id: 'client-gopeed-bt-prefix', enabled: true, priority: 120,
+    field: 'client', operator: 'startsWith', pattern: 'Gopeed bt-',
+    action: 'block_ip', comment: '已知纯吸血客户端 Gopeed bt-'
+  },
+  {
+    id: 'client-gopeed-dev-bt-prefix', enabled: true, priority: 120,
+    field: 'client', operator: 'startsWith', pattern: 'Gopeed dev bt-',
+    action: 'block_ip', comment: '已知纯吸血客户端 Gopeed dev bt-'
   },
   ...['hp/torrent', 'hp', 'dt/torrent', 'dt', 'xm/torrent', 'xm'].map((pattern) => ({
     id: `client-${pattern.replace('/', '-')}`,

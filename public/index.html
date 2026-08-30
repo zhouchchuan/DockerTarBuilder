@@ -8,10 +8,11 @@
 </head>
 <body>
   <header>
-    <div class="brand"><span class="mark">PB</span><strong>PeerBander Beyonder</strong><small>0.0.2</small></div>
+    <div class="brand"><span class="mark">PB</span><strong>PeerBander Beyonder</strong><small>0.0.3</small></div>
     <nav>
       <button data-tab="dashboard" class="active">状态</button>
       <button data-tab="events">封禁记录</button>
+      <button data-tab="analytics">数据分析</button>
       <button data-tab="rules">规则管理</button>
       <button data-tab="settings">设置</button>
     </nav>
@@ -22,17 +23,21 @@
 
     <section id="dashboard" class="tab active">
       <div class="title-row">
-        <div><h1>运行状态</h1><p>纯吸血客户端封 IP；迅雷只封当前 IP:端口。</p></div>
+        <div><h1>运行状态</h1><p>纯吸血和过度下载封 IP；迅雷只封当前 IP:端口。</p></div>
         <button id="scanNow" class="primary">立即检查</button>
       </div>
       <div class="cards">
         <article><label>服务状态</label><strong id="serviceState">—</strong></article>
-        <article><label>qB 连接</label><strong id="qbState">—</strong></article>
+        <article><label>下载器在线</label><strong id="qbState">—</strong></article>
         <article><label>检查次数</label><strong id="scanCount">0</strong></article>
         <article><label>当前 Peers</label><strong id="peerCount">0</strong></article>
-        <article><label>整 IP 封禁</label><strong id="ipBanCount">0</strong></article>
-        <article><label>精准 Endpoint 封禁</label><strong id="endpointBanCount">0</strong></article>
+        <article><label>生效中封禁</label><strong id="activeBanCount">0</strong></article>
+        <article><label>近31天独立 IP</label><strong id="monthlyUniqueIPs">0</strong></article>
       </div>
+      <article class="panel">
+        <h2>下载器状态</h2>
+        <div id="downloaderStatus" class="downloader-status"></div>
+      </article>
       <article class="panel">
         <h2>最近一次检查</h2>
         <dl class="details">
@@ -40,52 +45,63 @@
           <dt>活动种子</dt><dd id="torrentCount">0</dd>
           <dt>最后检查</dt><dd id="lastScanAt">—</dd>
           <dt>最后错误</dt><dd id="lastError">无</dd>
+          <dt>整 IP 封禁累计</dt><dd id="ipBanCount">0</dd>
+          <dt>精准封禁累计</dt><dd id="endpointBanCount">0</dd>
         </dl>
       </article>
       <article class="panel">
         <h2>当前连接与判断</h2>
-        <div class="table-wrap"><table><thead><tr><th>Endpoint</th><th>客户端</th><th>PeerID</th><th>种子</th><th>判断</th></tr></thead><tbody id="peerRows"></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>下载器</th><th>Endpoint</th><th>客户端</th><th>PeerID</th><th>进度</th><th>已上传给Peer</th><th>种子</th><th>判断</th></tr></thead><tbody id="peerRows"></tbody></table></div>
       </article>
     </section>
 
     <section id="events" class="tab">
-      <div class="title-row"><div><h1>封禁记录</h1><p>记录实际写入 qB 封禁列表的目标。</p></div><button id="clearEvents" class="danger">清空记录</button></div>
-      <article class="panel"><div class="table-wrap"><table><thead><tr><th>时间</th><th>封禁目标</th><th>类型</th><th>客户端</th><th>PeerID</th><th>原因</th></tr></thead><tbody id="eventRows"></tbody></table></div></article>
+      <div class="title-row"><div><h1>封禁记录</h1><p>保留历史记录；到期目标会自动从对应 qB 封禁列表中移除。</p></div><button id="clearEvents" class="danger">清空记录</button></div>
+      <article class="panel"><div class="table-wrap"><table><thead><tr><th>下载器</th><th>封禁目标</th><th>类型</th><th>封禁时间</th><th>预计解封</th><th>实际解封</th><th>客户端</th><th>原因</th></tr></thead><tbody id="eventRows"></tbody></table></div></article>
+    </section>
+
+    <section id="analytics" class="tab">
+      <div class="title-row"><div><h1>数据分析</h1><p>客户端传输占比、当前 Peer 类型及近31天独立连接 IP。</p></div><button id="refreshAnalytics">刷新</button></div>
+      <div class="chart-grid">
+        <article class="panel chart-panel"><h2>不同客户端获取数据占比</h2><p class="hint">统计 0.0.3 开始运行后，本下载器向各客户端实际上传的数据。</p><div class="chart-body"><div id="clientChart" class="donut"><span>暂无数据</span></div><div id="clientLegend" class="legend"></div></div></article>
+        <article class="panel chart-panel"><h2>当前 Peer 类型占比</h2><p class="hint">正常客户端、吸血客户端与迅雷客户端分开统计。</p><div class="chart-body"><div id="peerChart" class="donut"><span>暂无数据</span></div><div id="peerLegend" class="legend"></div></div></article>
+      </div>
+      <article class="panel"><h2>近31天独立 IP</h2><div class="big-number"><strong id="analyticsUniqueIPs">0</strong><span>去重后的公网 IP</span></div><div id="uniqueByDownloader" class="downloader-status"></div></article>
     </section>
 
     <section id="rules" class="tab">
-      <div class="title-row"><div><h1>规则管理</h1><p>支持 client、peerId、IP；动作支持放行、观察、整 IP、精准 Endpoint。</p></div><button id="saveRules" class="primary">保存规则</button></div>
+      <div class="title-row"><div><h1>规则管理</h1><p>用表单配置客户端名称、PeerID 或 IP 的放行与封禁。</p></div><div class="button-row"><button id="addRule">新增规则</button><button id="saveRules" class="primary">保存规则</button></div></div>
       <article class="panel">
-        <p class="hint">第一版使用 JSON 编辑器。规则优先级数值越大越先匹配；明确 Allow 永远优先于迅雷内置精准规则。</p>
-        <textarea id="rulesEditor" spellcheck="false"></textarea>
+        <p class="hint">白名单始终优先。迅雷的任何封禁规则都会自动转换为精准 IP:端口封禁，不会扩大成整个 IP。</p>
+        <div class="table-wrap rule-table"><table><thead><tr><th>启用</th><th>匹配字段</th><th>条件</th><th>匹配内容</th><th>动作</th><th>优先级</th><th>备注</th><th></th></tr></thead><tbody id="ruleRows"></tbody></table></div>
       </article>
     </section>
 
     <section id="settings" class="tab">
-      <div class="title-row"><div><h1>设置</h1><p>连接 qBittorrent Precision Web API。</p></div><button id="saveConfig" class="primary">保存设置</button></div>
-      <article class="panel form-grid">
-        <label>启用自动检查<input id="enabled" type="checkbox"></label>
-        <label>qB WebUI 地址<input id="qbUrl" placeholder="http://192.168.50.82:9191"></label>
-        <label>qB 用户名<input id="qbUsername" autocomplete="username"></label>
-        <label>qB 密码<input id="qbPassword" type="password" autocomplete="current-password" placeholder="留空表示保持原密码"></label>
-        <label>检查间隔（秒）<input id="scanInterval" type="number" min="2" max="300"></label>
-        <label>重复记录冷却（秒）<input id="decisionCooldown" type="number" min="30" max="86400"></label>
-        <div class="form-actions"><button id="testConnection">测试 qB 连接</button></div>
+      <div class="title-row"><div><h1>设置</h1><p>行为检测、封禁周期及多个 qBittorrent 下载器。</p></div><button id="saveConfig" class="primary">保存设置</button></div>
+      <article class="panel">
+        <h2>检查与封禁</h2>
+        <div class="form-grid">
+          <label class="switch-row">启用自动检查<input id="enabled" type="checkbox"></label>
+          <label>检查间隔（秒）<input id="scanInterval" type="number" min="2" max="300"></label>
+          <label class="switch-row">启用过度下载检查<input id="behaviorEnabled" type="checkbox"></label>
+          <label class="switch-row">启用迅雷反吸血<input id="xunleiProtectionEnabled" type="checkbox"></label>
+          <label>允许进度误差（%）<input id="excessProgressPercent" type="number" min="0" max="1000" step="0.1"></label>
+          <label>允许进度倒退（%）<input id="progressRewindPercent" type="number" min="0" max="100" step="0.1"></label>
+          <label>开始检测的最低上传量（MB）<input id="minimumUploadedMB" type="number" min="0" step="1"></label>
+          <label>自动解封周期（天）<input id="banDurationDays" type="number" min="1" max="365"></label>
+        </div>
+        <p class="notice-line">Peer进度高于它从本下载器获取的数据比例属于正常情况，不会命中；只有实际上传比例比报告进度高出设定误差才会封禁。</p>
       </article>
-      <article class="panel notice">
-        <h2>群晖部署要求</h2>
-        <p>容器必须使用 host 网络；qB WebUI 地址填写群晖局域网 IP 和实际端口。迅雷精准封禁要求 qBittorrent Precision 0.1.3 或更高版本。</p>
+      <article class="panel">
+        <div class="section-head"><div><h2>qBittorrent 下载器</h2><p class="hint">可添加多个容器，例如 5252、6262 等不同 WebUI 端口。</p></div><button id="addDownloader">添加下载器</button></div>
+        <div id="downloaderEditors" class="downloader-editors"></div>
       </article>
+      <article class="panel notice"><h2>群晖部署要求</h2><p>容器建议使用 host 网络；地址填写群晖局域网 IP 与实际 WebUI 端口。迅雷精准封禁需要 qBittorrent Precision 0.1.3 或更高版本。</p></article>
     </section>
   </main>
 
-  <dialog id="tokenDialog">
-    <form method="dialog">
-      <h2>管理令牌</h2><p>此容器启用了 PBB_ADMIN_TOKEN，请输入令牌。</p>
-      <input id="tokenInput" type="password" autocomplete="current-password">
-      <button id="saveToken" class="primary">继续</button>
-    </form>
-  </dialog>
+  <dialog id="tokenDialog"><form method="dialog"><h2>管理令牌</h2><p>请输入 PBB_ADMIN_TOKEN。</p><input id="tokenInput" type="password"><button id="saveToken" class="primary">继续</button></form></dialog>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

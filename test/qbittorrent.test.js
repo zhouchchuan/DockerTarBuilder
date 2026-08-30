@@ -26,6 +26,11 @@ test('qB client logs in, reads peers and uses separate ban APIs', async (context
       response.setHeader('content-type', 'application/json');
       return response.end(JSON.stringify({ peers: { one: { ip: '203.0.113.8', port: 6881, client: 'Xunlei', peer_id_client: '-XL0017-' } } }));
     }
+    if (request.url === '/api/v2/app/preferences') {
+      response.setHeader('content-type', 'application/json');
+      return response.end(JSON.stringify({ banned_IPs: '198.51.100.7\n203.0.113.8:6881\n192.0.2.1' }));
+    }
+    if (request.url === '/api/v2/app/setPreferences') return response.end('');
     if (request.url === '/api/v2/transfer/banPeers' || request.url === '/api/v2/transfer/banPeerEndpoints') return response.end('');
     response.statusCode = 404;
     response.end('not found');
@@ -43,11 +48,14 @@ test('qB client logs in, reads peers and uses separate ban APIs', async (context
   }]);
   await client.banIPs(['198.51.100.7']);
   await client.banEndpoints(['203.0.113.8:6881']);
+  await client.removeBans(['198.51.100.7', '203.0.113.8:6881']);
 
   const ipBan = requests.find((item) => item.url === '/api/v2/transfer/banPeers');
   const endpointBan = requests.find((item) => item.url === '/api/v2/transfer/banPeerEndpoints');
   assert.equal(new URLSearchParams(ipBan.body).get('peers'), '198.51.100.7');
   assert.equal(new URLSearchParams(endpointBan.body).get('peers'), '203.0.113.8:6881');
+  const setPreferences = requests.find((item) => item.url === '/api/v2/app/setPreferences');
+  assert.deepEqual(JSON.parse(new URLSearchParams(setPreferences.body).get('json')), { banned_IPs: '192.0.2.1' });
 });
 
 test('qB client accepts HTTP 204 login without a cookie for auth-bypass setups', async (context) => {

@@ -43,7 +43,7 @@ export function matchRule(rule, peer) {
   }
 }
 
-export function classifyPeer(peer, rules) {
+export function classifyPeer(peer, rules, options = {}) {
   if (!peer.ip || !peer.port || isProtectedAddress(peer.ip)) {
     return { action: 'allow', reason: 'protected_or_invalid_address', ruleId: null };
   }
@@ -56,13 +56,42 @@ export function classifyPeer(peer, rules) {
   const allow = ordered.find((rule) => rule.action === 'allow' && matchRule(rule, peer));
   if (allow) return { action: 'allow', reason: allow.comment || 'allow_rule', ruleId: allow.id };
 
-  // Xunlei is handled before generic leech rules. It must never be widened to
-  // an IP-wide ban because other clients can share the same public address.
+  const matched = ordered.find((rule) => rule.action !== 'allow' && matchRule(rule, peer));
+  // Xunlei must never be widened to an IP-wide ban. A user-created block rule
+  // is normalized to the exact endpoint, including rules for one version.
   if (isXunlei(peer)) {
-    return { action: 'block_endpoint', reason: 'xunlei_precision_endpoint', ruleId: 'builtin-xunlei' };
+    if (matched && matched.action !== 'observe') {
+      return { action: 'block_endpoint', reason: matched.comment || 'xunlei_rule', ruleId: matched.id };
+    }
+    if (options.xunleiProtectionEnabled !== false) {
+      return { action: 'block_endpoint', reason: 'xunlei_precision_endpoint', ruleId: 'builtin-xunlei' };
+    }
+    return { action: matched?.action || 'observe', reason: matched?.comment || 'xunlei_protection_disabled', ruleId: matched?.id || null };
   }
 
-  const matched = ordered.find((rule) => rule.action !== 'allow' && matchRule(rule, peer));
   if (!matched) return { action: 'observe', reason: 'no_rule_matched', ruleId: null };
   return { action: matched.action, reason: matched.comment || 'matched_rule', ruleId: matched.id };
+}
+
+export function clientFamily(peer) {
+  const client = String(peer.client || '').trim();
+  const peerId = String(peer.peerId || '');
+  if (isXunlei(peer)) return 'Xunlei';
+  const known = [
+    [/gopeed/i, 'Gopeed'],
+    [/qbittorrent/i, 'qBittorrent'],
+    [/transmission/i, 'Transmission'],
+    [/libtorrent/i, 'libtorrent'],
+    [/(deluge)/i, 'Deluge'],
+    [/(utorrent|\u00b5torrent)/i, 'uTorrent'],
+    [/biglybt/i, 'BiglyBT'],
+    [/vuze|azureus/i, 'Vuze'],
+    [/aria2/i, 'aria2']
+  ];
+  for (const [pattern, name] of known) {
+    if (pattern.test(client)) return name;
+  }
+  if (client) return client.replace(/\s+v?\d+(?:\.\d+)*.*$/i, '').slice(0, 40) || client.slice(0, 40);
+  if (peerId) return `PeerID ${peerId.slice(0, 8)}`;
+  return 'Unknown';
 }

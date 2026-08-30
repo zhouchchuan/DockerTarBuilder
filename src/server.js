@@ -59,7 +59,9 @@ async function handleApi(request, response, url) {
     return json(response, 200, store.publicConfig());
   }
   if (request.method === 'PUT' && url.pathname === '/api/config') {
-    const result = await store.updateConfig(await readJsonBody(request));
+    const input = await readJsonBody(request);
+    await engine.beforeConfigUpdate(input);
+    const result = await store.updateConfig(input);
     engine.reconfigure();
     return json(response, 200, result);
   }
@@ -80,8 +82,14 @@ async function handleApi(request, response, url) {
   if (request.method === 'GET' && url.pathname === '/api/peers') {
     return json(response, 200, engine.currentPeers);
   }
+  if (request.method === 'GET' && url.pathname === '/api/analytics') {
+    return json(response, 200, engine.analytics());
+  }
+  if (request.method === 'GET' && url.pathname === '/api/bans') {
+    return json(response, 200, store.runtime.activeBans);
+  }
   if (request.method === 'POST' && url.pathname === '/api/test-connection') {
-    return json(response, 200, await engine.testConnection());
+    return json(response, 200, await engine.testConnection(await readJsonBody(request)));
   }
   if (request.method === 'POST' && url.pathname === '/api/scan') {
     return json(response, 200, await engine.scan({ force: true }));

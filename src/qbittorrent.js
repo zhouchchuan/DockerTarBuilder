@@ -132,6 +132,25 @@ export class QBittorrentClient {
     }
   }
 
+  async bannedPeers() {
+    const preferences = await (await this.request('/api/v2/app/preferences')).json();
+    return String(preferences.banned_IPs || '')
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  async removeBans(targets) {
+    const removing = new Set(targets.map((item) => String(item).trim()));
+    if (!removing.size) return;
+    const current = await this.bannedPeers();
+    const remaining = current.filter((item) => !removing.has(item));
+    if (remaining.length === current.length) return;
+    await this.postForm('/api/v2/app/setPreferences', {
+      json: JSON.stringify({ banned_IPs: remaining.join('\n') })
+    });
+  }
+
   async postForm(pathname, values) {
     const body = new URLSearchParams(values);
     await this.request(pathname, {
