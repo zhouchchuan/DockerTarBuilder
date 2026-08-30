@@ -1,0 +1,300 @@
+From d20e02673c7924173f9ef2f2ffc75ce1da44fc6a Mon Sep 17 00:00:00 2001
+From: Codex <codex@local.invalid>
+Date: Sun, 30 Aug 2026 14:33:44 +0800
+Subject: [PATCH] fix(precision): extend sessions and batch torrent adds
+
+---
+ src/base/preferences.cpp                    | 20 +++++++++++-
+ src/webui/www/private/addtorrent.html       | 15 ++++++---
+ src/webui/www/private/scripts/addtorrent.js | 34 ++++++++++++++++++---
+ src/webui/www/private/scripts/client.js     | 21 ++++++++++---
+ src/webui/www/private/scripts/misc.js       | 13 ++++++++
+ src/webui/www/test/private/misc.test.js     | 22 +++++++++++++
+ 6 files changed, 111 insertions(+), 14 deletions(-)
+
+diff --git a/src/base/preferences.cpp b/src/base/preferences.cpp
+index c55095a..66ae34c 100644
+--- a/src/base/preferences.cpp
++++ b/src/base/preferences.cpp
+@@ -50,6 +50,9 @@
+ 
+ namespace
+ {
++    constexpr int LEGACY_WEB_UI_SESSION_TIMEOUT = 3600;
++    constexpr int PRECISION_WEB_UI_SESSION_TIMEOUT = 7 * 24 * 60 * 60;
++
+     template <typename T>
+     T value(const QString &key, const T &defaultValue = {})
+     {
+@@ -84,7 +87,22 @@ Preferences *Preferences::instance()
+ void Preferences::initInstance()
+ {
+     if (!m_instance)
++    {
+         m_instance = new Preferences;
++
++        // qBittorrent Precision keeps an authenticated WebUI session for seven
++        // days by default. Upgrade the upstream one-hour default once while
++        // preserving any timeout the administrator explicitly customized.
++        const QString migrationKey = u"Preferences/WebUI/PrecisionSessionTimeout7DaysApplied"_s;
++        if (!value(migrationKey, false))
++        {
++            const QString timeoutKey = u"Preferences/WebUI/SessionTimeout"_s;
++            if (value<int>(timeoutKey, LEGACY_WEB_UI_SESSION_TIMEOUT) == LEGACY_WEB_UI_SESSION_TIMEOUT)
++                setValue(timeoutKey, PRECISION_WEB_UI_SESSION_TIMEOUT);
++
++            setValue(migrationKey, true);
++        }
++    }
+ }
+ 
+ void Preferences::freeInstance()
+@@ -945,7 +963,7 @@ void Preferences::setWebUIBanDuration(const std::chrono::seconds duration)
+ 
+ int Preferences::getWebUISessionTimeout() const
+ {
+-    return value<int>(u"Preferences/WebUI/SessionTimeout"_s, 3600);
++    return value<int>(u"Preferences/WebUI/SessionTimeout"_s, PRECISION_WEB_UI_SESSION_TIMEOUT);
+ }
+ 
+ void Preferences::setWebUISessionTimeout(const int timeout)
+diff --git a/src/webui/www/private/addtorrent.html b/src/webui/www/private/addtorrent.html
+index 718fbfa..627b39c 100644
+--- a/src/webui/www/private/addtorrent.html
++++ b/src/webui/www/private/addtorrent.html
+@@ -82,10 +82,14 @@
+ 
+                 // ensure event is from qBittorrent and not from a browser extension
+                 // also make sure the event is a message from the AddTorrent dialog
+-                if (event?.data?.type !== "addtorrent_metadata")
++                if ((event?.data?.type !== "addtorrent_metadata")
++                    && (event?.data?.type !== "addtorrent_batch_metadata"))
+                     return;
+ 
+-                window.qBittorrent.AddTorrent.populateMetadata(event.data.metadata);
++                if (event.data.type === "addtorrent_batch_metadata")
++                    window.qBittorrent.AddTorrent.populateBatchMetadata(event.data.metadata, event.data.sources, event.data.fileNames);
++                else
++                    window.qBittorrent.AddTorrent.populateMetadata(event.data.metadata);
+                 window.qBittorrent.AddTorrent.metadataCompleted(false);
+             });
+ 
+@@ -206,7 +210,7 @@
+                     <legend>QBT_TR(Torrent settings)QBT_TR[CONTEXT=AddNewTorrentDialog]</legend>
+                     <table style="width: 100%">
+                         <tbody>
+-                            <tr>
++                            <tr id="renameRow">
+                                 <td class="noWrap">
+                                     <label for="rename">QBT_TR(Rename torrent)QBT_TR[CONTEXT=AddNewTorrentDialog]</label>
+                                 </td>
+@@ -332,7 +336,7 @@
+                     </table>
+                 </fieldset>
+ 
+-                <fieldset class="settings" style="text-align: left;">
++                <fieldset id="torrentInformation" class="settings" style="text-align: left;">
+                     <legend>QBT_TR(Torrent information)QBT_TR[CONTEXT=AddNewTorrentDialog]</legend>
+                     <table style="width: 100%">
+                         <tbody>
+@@ -383,7 +387,7 @@
+             <div class="column" style="max-height: 750px; overflow-y: auto;">
+                 <fieldset class="settings" style="text-align: left; display: flex; flex-direction: column; height: 100%; box-sizing: border-box;">
+                     <legend style="width: fit-content;">QBT_TR(Files)QBT_TR[CONTEXT=AddNewTorrentDialog]</legend>
+-                    <div style="text-align: right; padding-bottom: 10px;">
++                    <div id="torrentFilesFilterContainer" style="text-align: right; padding-bottom: 10px;">
+                         <input type="text" id="torrentFilesFilterInput" placeholder="QBT_TR(Filter files...)QBT_TR[CONTEXT=AddNewTorrentDialog]" aria-label="QBT_TR(Filter files...)QBT_TR[CONTEXT=AddNewTorrentDialog]" autocorrect="off" autocapitalize="none">
+                     </div>
+                     <div id="torrentFiles" style="overflow: auto;">
+@@ -400,6 +404,7 @@
+                             </table>
+                         </div>
+                     </div>
++                    <ol id="batchTorrentList" hidden style="overflow: auto; margin: 0; padding-left: 2.5em;"></ol>
+                 </fieldset>
+             </div>
+         </div>
+diff --git a/src/webui/www/private/scripts/addtorrent.js b/src/webui/www/private/scripts/addtorrent.js
+index 6692ffe..ad6a30f 100644
+--- a/src/webui/www/private/scripts/addtorrent.js
++++ b/src/webui/www/private/scripts/addtorrent.js
+@@ -30,6 +30,7 @@ window.qBittorrent.AddTorrent ??= (() => {
+             changeCategorySelect: changeCategorySelect,
+             changeTMM: changeTMM,
+             metadataCompleted: metadataCompleted,
++            populateBatchMetadata: populateBatchMetadata,
+             populateMetadata: populateMetadata,
+             setWindowId: setWindowId,
+             submitForm: submitForm,
+@@ -44,6 +45,7 @@ window.qBittorrent.AddTorrent ??= (() => {
+     let windowId = "";
+     let source = "";
+     let downloader = "";
++    let batchMode = false;
+ 
+     const clientData = window.parent.qBittorrent.ClientData;
+ 
+@@ -298,6 +300,28 @@ window.qBittorrent.AddTorrent ??= (() => {
+         }
+     };
+ 
++    const populateBatchMetadata = (metadata, sources, fileNames) => {
++        batchMode = true;
++
++        document.getElementById("urls").value = sources.join("\n");
++        document.getElementById("renameRow").hidden = true;
++        document.getElementById("rename").disabled = true;
++        document.getElementById("torrentInformation").hidden = true;
++        document.getElementById("torrentFilesFilterContainer").hidden = true;
++        document.getElementById("torrentFiles").hidden = true;
++
++        const torrentList = document.getElementById("batchTorrentList");
++        torrentList.hidden = false;
++        for (const [index, torrent] of metadata.entries()) {
++            const item = document.createElement("li");
++            item.textContent = torrent.info?.name || fileNames[index];
++            torrentList.appendChild(item);
++        }
++
++        const title = `${fileNames[0]} (+${fileNames.length - 1})`;
++        window.parent.document.getElementById(`${windowId}_title`).textContent = title;
++    };
++
+     const setWindowId = (id) => {
+         windowId = id;
+     };
+@@ -308,10 +332,12 @@ window.qBittorrent.AddTorrent ??= (() => {
+         document.getElementById("dlLimitHidden").value = Number(document.getElementById("dlLimitText").value) * 1024;
+         document.getElementById("upLimitHidden").value = Number(document.getElementById("upLimitText").value) * 1024;
+ 
+-        document.getElementById("filePriorities").value = table.getFileTreeArray()
+-            .filter((node) => !node.isFolder)
+-            .sort((node1, node2) => (node1.fileId - node2.fileId))
+-            .map((node) => node.priority);
++        document.getElementById("filePriorities").value = batchMode
++            ? ""
++            : table.getFileTreeArray()
++                .filter((node) => !node.isFolder)
++                .sort((node1, node2) => (node1.fileId - node2.fileId))
++                .map((node) => node.priority);
+ 
+         if (!isAutoTMMEnabled())
+             document.getElementById("useDownloadPathHidden").value = document.getElementById("useDownloadPath").checked;
+diff --git a/src/webui/www/private/scripts/client.js b/src/webui/www/private/scripts/client.js
+index 5579dad..764cc59 100644
+--- a/src/webui/www/private/scripts/client.js
++++ b/src/webui/www/private/scripts/client.js
+@@ -169,6 +169,7 @@ window.qBittorrent.Client ??= (() => {
+     const createAddTorrentWindow = (title, source, metadata = undefined, downloader = undefined) => {
+         const isFirefox = navigator.userAgent.includes("Firefox");
+         const isSafari = navigator.userAgent.includes("AppleWebKit") && !navigator.userAgent.includes("Chrome");
++        const isBatch = metadata?.batch === true;
+         let height = 855;
+         if (isSafari)
+             height -= 40;
+@@ -176,7 +177,9 @@ window.qBittorrent.Client ??= (() => {
+             height -= 10;
+ 
+         const staticId = "uploadPage";
+-        const id = `${staticId}-${encodeURIComponent(source)}`;
++        const id = isBatch
++            ? `${staticId}-batch-${Date.now()}`
++            : `${staticId}-${encodeURIComponent(source)}`;
+ 
+         const contentURL = new URL("addtorrent.html", window.location);
+         contentURL.search = new URLSearchParams({
+@@ -204,10 +207,12 @@ window.qBittorrent.Client ??= (() => {
+             }),
+             onContentLoaded: () => {
+                 if (metadata !== undefined) {
+-                    const type = "addtorrent_metadata";
++                    const type = isBatch ? "addtorrent_batch_metadata" : "addtorrent_metadata";
+                     document.getElementById(`${id}_iframe`).contentWindow.postMessage({
+-                        type,
+-                        metadata,
++                        type: type,
++                        metadata: isBatch ? metadata.torrents : metadata,
++                        sources: isBatch ? metadata.sources : undefined,
++                        fileNames: isBatch ? metadata.fileNames : undefined,
+                     }, window.origin);
+                 }
+             }
+@@ -234,6 +239,14 @@ window.qBittorrent.Client ??= (() => {
+                 }
+ 
+                 const json = await response.json();
++                const batchMetadata = window.qBittorrent.Misc.buildTorrentUploadBatch(json, fileNames);
++                if (batchMetadata !== null) {
++                    createAddTorrentWindow(
++                        `QBT_TR(Add torrent)QBT_TR[CONTEXT=AddNewTorrentDialog] (${json.length})`,
++                        batchMetadata.sources[0], batchMetadata);
++                    return;
++                }
++
+                 for (const [i, metadata] of json.entries()) {
+                     const title = metadata.name || fileNames[i];
+                     const hash = metadata.infohash_v2 || metadata.infohash_v1;
+diff --git a/src/webui/www/private/scripts/misc.js b/src/webui/www/private/scripts/misc.js
+index 3f4ecab..f76e2f7 100644
+--- a/src/webui/www/private/scripts/misc.js
++++ b/src/webui/www/private/scripts/misc.js
+@@ -39,6 +39,7 @@ window.qBittorrent.Misc ??= (() => {
+             friendlyPercentage: friendlyPercentage,
+             parseHtmlLinks: parseHtmlLinks,
+             parseVersion: parseVersion,
++            buildTorrentUploadBatch: buildTorrentUploadBatch,
+             escapeHtml: escapeHtml,
+             naturalSortCollator: naturalSortCollator,
+             safeTrim: safeTrim,
+@@ -203,6 +204,18 @@ window.qBittorrent.Misc ??= (() => {
+         };
+     };
+ 
++    const buildTorrentUploadBatch = (metadata, fileNames) => {
++        if (metadata.length <= 1)
++            return null;
++
++        return {
++            batch: true,
++            torrents: metadata,
++            sources: metadata.map((torrent) => torrent.infohash_v2 || torrent.infohash_v1),
++            fileNames: fileNames.slice(),
++        };
++    };
++
+     const escapeHtml = (() => {
+         const div = document.createElement("div");
+         return (str) => {
+diff --git a/src/webui/www/test/private/misc.test.js b/src/webui/www/test/private/misc.test.js
+index 19ac9de..c457728 100644
+--- a/src/webui/www/test/private/misc.test.js
++++ b/src/webui/www/test/private/misc.test.js
+@@ -131,3 +131,25 @@ test("Test formatDate() - Fallback Behavior", () => {
+     // Restore original window.parent
+     window.parent = originalParent;
+ });
++
++test("Test buildTorrentUploadBatch()", () => {
++    const buildTorrentUploadBatch = window.qBittorrent.Misc.buildTorrentUploadBatch;
++    const singleTorrent = [{ infohash_v1: "hash-one" }];
++
++    expect(buildTorrentUploadBatch(singleTorrent, ["one.torrent"])).toBeNull();
++
++    const metadata = [
++        { infohash_v1: "hash-one" },
++        { infohash_v1: "legacy-two", infohash_v2: "hash-two" },
++    ];
++    const fileNames = ["one.torrent", "two.torrent"];
++    const result = buildTorrentUploadBatch(metadata, fileNames);
++
++    expect(result).toEqual({
++        batch: true,
++        torrents: metadata,
++        sources: ["hash-one", "hash-two"],
++        fileNames: fileNames,
++    });
++    expect(result.fileNames).not.toBe(fileNames);
++});
+-- 
+2.53.0.windows.2
+

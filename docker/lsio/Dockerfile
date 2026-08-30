@@ -4,7 +4,7 @@ ARG ALPINE_VERSION=3.24
 FROM alpine:${ALPINE_VERSION} AS builder
 
 ARG LIBTORRENT_REF=v2.0.12
-ARG QBT_PRECISION_VERSION=0.1.3
+ARG QBT_PRECISION_VERSION=0.1.4
 ARG QBT_UPSTREAM_VERSION=5.2.3
 ARG QBT_UPSTREAM_COMMIT=0b63c3d17373f6132ea211c9dcd4241284ccdfaf
 
@@ -87,7 +87,7 @@ RUN cmake \
 FROM lscr.io/linuxserver/qbittorrent:5.2.3
 
 ARG LIBTORRENT_REF=v2.0.12
-ARG QBT_PRECISION_VERSION=0.1.3
+ARG QBT_PRECISION_VERSION=0.1.4
 ARG QBT_UPSTREAM_VERSION=5.2.3
 ARG QBT_UPSTREAM_COMMIT=0b63c3d17373f6132ea211c9dcd4241284ccdfaf
 
@@ -117,4 +117,3 @@ RUN chmod 0755 /app/qbittorrent-nox \
     && /app/qbittorrent-nox --version | grep -F "qBittorrent v${QBT_UPSTREAM_VERSION}" \
     && ldd /app/qbittorrent-nox | tee /runtime-dependencies.txt \
     && ! grep -F "not found" /runtime-dependencies.txt
-
