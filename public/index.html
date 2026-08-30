@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>PeerBander Beyonder</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/enhancements.css">
 </head>
 <body>
   <header>
-    <div class="brand"><span class="mark">PB</span><strong>PeerBander Beyonder</strong><small>0.0.4</small></div>
+    <div class="brand"><span class="mark">PB</span><strong>PeerBander Beyonder</strong><small>0.0.5</small></div>
     <nav>
       <button data-tab="dashboard" class="active">状态</button>
       <button data-tab="events">封禁记录</button>
@@ -16,6 +17,7 @@
       <button data-tab="rules">规则管理</button>
       <button data-tab="settings">设置</button>
     </nav>
+    <button id="logoutButton" class="logout-button">退出登录</button>
   </header>
 
   <main>
@@ -56,8 +58,11 @@
     </section>
 
     <section id="events" class="tab">
-      <div class="title-row"><div><h1>封禁记录</h1><p>保留历史记录；到期目标会自动从对应 qB 封禁列表中移除。</p></div><button id="clearEvents" class="danger">清空记录</button></div>
-      <article class="panel"><div class="table-wrap"><table><thead><tr><th>下载器</th><th>封禁目标</th><th>类型</th><th>封禁时间</th><th>预计解封</th><th>实际解封</th><th>客户端</th><th>原因</th></tr></thead><tbody id="eventRows"></tbody></table></div></article>
+      <div class="title-row"><div><h1>封禁记录</h1><p>每页显示30条，页面打开时每15秒自动刷新；到期目标会自动从对应 qB 封禁列表中移除。</p></div><button id="clearEvents" class="danger">清空记录</button></div>
+      <article class="panel">
+        <div class="table-wrap"><table><thead><tr><th>下载器</th><th>封禁目标</th><th>类型</th><th>封禁时间</th><th>预计解封</th><th>实际解封</th><th>客户端</th><th>原因</th></tr></thead><tbody id="eventRows"></tbody></table></div>
+        <div class="pagination"><button id="eventsPrev">上一页</button><span id="eventsPageInfo">第 1 / 1 页 · 共 0 条</span><small id="eventsRefreshedAt">等待刷新</small><button id="eventsNext">下一页</button></div>
+      </article>
     </section>
 
     <section id="analytics" class="tab">
@@ -101,7 +106,6 @@
     </section>
   </main>
 
-  <dialog id="tokenDialog"><form method="dialog"><h2>管理令牌</h2><p>请输入 PBB_ADMIN_TOKEN。</p><input id="tokenInput" type="password"><button id="saveToken" class="primary">继续</button></form></dialog>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

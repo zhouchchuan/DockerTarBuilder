@@ -1,6 +1,6 @@
 services:
   peerbander-beyonder:
-    image: peerbander-beyonder:0.0.4
+    image: peerbander-beyonder:0.0.5
     container_name: peerbander-beyonder
     network_mode: host
     restart: unless-stopped
@@ -10,7 +10,7 @@ services:
       PBB_WEBUI_PORT: "9899"
       PBB_DATA_DIR: /data
       TZ: Asia/Shanghai
-      # 可选：启用后，打开 WebUI 时需要输入同一个管理令牌。
+      # 可选：仅供旧版 API 自动化兼容；WebUI 始终使用首次创建的管理员账号登录。
       # PBB_ADMIN_TOKEN: 请改成足够长的随机字符串
     volumes:
       - ./data:/data

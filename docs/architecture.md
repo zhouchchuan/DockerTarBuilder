@@ -1,4 +1,4 @@
-# PeerBander Beyonder 0.0.4 架构
+# PeerBander Beyonder 0.0.5 架构
 
 ```text
 多个 qBittorrent Precision Web API
@@ -36,8 +36,13 @@
 - `/data/rules.json`：图形化规则对应的数据。
 - `/data/events.json`：封禁与解封时间历史。
 - `/data/runtime.json`：Peer会话、客户端流量、近31天IP和未到期封禁。
+- `/data/auth.json`：管理员账号、密码盐值与哈希、会话签名密钥；不保存明文密码。
 
 所有文件使用临时文件加原子替换写入。运行数据保留31天 Peer/IP 状态，并在每次扫描时清理过期状态。
+
+## 后台认证
+
+首次打开管理页时创建管理员账号。登录成功后服务器签发只允许同站点访问的 HttpOnly Cookie，有效期7天；未登录请求无法读取后台页面或业务 API。`PBB_ADMIN_TOKEN` 仅作为旧版自动化 API 的兼容入口保留。
 
 ## 自动解封
 

@@ -13,7 +13,7 @@ permissions:
 
 env:
   IMAGE_NAME: peerbander-beyonder
-  VERSION: 0.0.4
+  VERSION: 0.0.5
 
 jobs:
   test-and-build:
@@ -34,7 +34,10 @@ jobs:
           node --check src/engine.js
           node --check src/behavior.js
           node --check src/store.js
+          node --check src/auth.js
+          node --check src/pagination.js
           node --check public/app.js
+          node --check public/login.js
           node --check public/id.js
           npm test
 
@@ -50,7 +53,6 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/pbb-data"
           docker run -d --name pbb-ci --network host \
             -e PBB_WEBUI_PORT=19899 \
-            -e PBB_ADMIN_TOKEN=ci-token \
             -v "${RUNNER_TEMP}/pbb-data:/data" \
             "${IMAGE_NAME}:${VERSION}"
           for attempt in $(seq 1 30); do
@@ -58,25 +60,44 @@ jobs:
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:19899/ | grep -F "PeerBander Beyonder"
-          curl --fail --silent -H "Authorization: Bearer ci-token" \
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:19899/api/status)" = "401"
+          curl --fail --silent http://127.0.0.1:19899/api/auth/status | jq -e '.configured == false and .authenticated == false'
+          curl --fail --silent --cookie-jar "${RUNNER_TEMP}/cookies.txt" \
+            -H "Content-Type: application/json" \
+            --data '{"username":"ci-admin","password":"ci-password-0.0.5"}' \
+            http://127.0.0.1:19899/api/auth/setup | jq -e '.ok == true'
+          ! grep -F "ci-password-0.0.5" "${RUNNER_TEMP}/pbb-data/auth.json"
+          curl --fail --silent --cookie "${RUNNER_TEMP}/cookies.txt" \
             http://127.0.0.1:19899/api/status | tee "${RUNNER_TEMP}/status.json"
-          jq -e '.version == "0.0.4" and .enabled == false' "${RUNNER_TEMP}/status.json"
-          curl --fail --silent -H "Authorization: Bearer ci-token" \
+          jq -e '.version == "0.0.5" and .enabled == false' "${RUNNER_TEMP}/status.json"
+          curl --fail --silent --cookie "${RUNNER_TEMP}/cookies.txt" \
             http://127.0.0.1:19899/api/analytics | jq -e '.monthlyUniqueIPs == 0'
+          curl --fail --silent --cookie "${RUNNER_TEMP}/cookies.txt" \
+            'http://127.0.0.1:19899/api/events?page=1&pageSize=30' \
+            | jq -e '.page == 1 and .pageSize == 30 and .total == 0 and (.items | length) == 0'
           test -s "${RUNNER_TEMP}/pbb-data/config.json"
           test -s "${RUNNER_TEMP}/pbb-data/rules.json"
           test -s "${RUNNER_TEMP}/pbb-data/runtime.json"
+          test -s "${RUNNER_TEMP}/pbb-data/auth.json"
           docker rm -f pbb-ci
           docker run -d --name pbb-ci-restart --network host \
             -e PBB_WEBUI_PORT=19899 \
-            -e PBB_ADMIN_TOKEN=ci-token \
             -v "${RUNNER_TEMP}/pbb-data:/data" \
             "${IMAGE_NAME}:${VERSION}"
           for attempt in $(seq 1 30); do
-            if curl --fail --silent -H "Authorization: Bearer ci-token" \
-              http://127.0.0.1:19899/api/status >/dev/null; then break; fi
+            if curl --fail --silent http://127.0.0.1:19899/api/auth/status >/dev/null; then break; fi
             sleep 1
           done
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:19899/api/status)" = "401"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            -H "Content-Type: application/json" --data '{"username":"ci-admin","password":"wrong-password"}' \
+            http://127.0.0.1:19899/api/auth/login)" = "401"
+          curl --fail --silent --cookie-jar "${RUNNER_TEMP}/cookies-restart.txt" \
+            -H "Content-Type: application/json" \
+            --data '{"username":"ci-admin","password":"ci-password-0.0.5"}' \
+            http://127.0.0.1:19899/api/auth/login | jq -e '.ok == true'
+          curl --fail --silent --cookie "${RUNNER_TEMP}/cookies-restart.txt" \
+            http://127.0.0.1:19899/api/status | jq -e '.version == "0.0.5"'
           docker rm -f pbb-ci-restart
 
       - name: Export Synology TAR
@@ -90,7 +111,7 @@ jobs:
       - name: Upload TAR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: peerbander-beyonder-ds1823xs-0.0.4-amd64
+          name: peerbander-beyonder-ds1823xs-0.0.5-amd64
           path: |
             dist/*.tar
             dist/*.sha256

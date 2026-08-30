@@ -1,8 +1,14 @@
-# PeerBander Beyonder 0.0.4
+# PeerBander Beyonder 0.0.5
 
 面向群晖 DS1823xs+ 的独立 qBittorrent Peer 防护容器。它通过 qBittorrent Web API 读取活动种子和 Peer，并把封禁目标写入 qBittorrent Precision 的封禁列表。
 
-## 0.0.4 功能
+## 0.0.5 功能
+
+- 封禁记录改为服务端分页，每页固定显示30条。
+- 打开“封禁记录”页面时，每15秒自动刷新一次当前页。
+- 首次打开后台必须创建管理员账号和密码，之后登录才能查看及操作后台。
+- 管理员密码使用随机盐和 scrypt 哈希保存在 `/data/auth.json`，不会保存明文；登录有效期为7天。
+- 保留 0.0.4 的精准 `IP:端口`、整 IP 封禁、行为检测、规则管理、数据分析和多下载器功能。
 
 - 修复群晖局域网 HTTP 环境下“新增规则”和“添加下载器”按钮无效。
 - 整 IP 封禁直接持久化到 qB 的封禁列表，并自动对账、重试旧版假成功记录。
@@ -38,13 +44,16 @@
 
 ## 群晖 DS1823xs+ 安装
 
-1. 从 GitHub Actions 下载 `peerbander-beyonder-ds1823xs-0.0.4-amd64` 构建产物并解压 TAR。
+1. 从 GitHub Actions 下载 `peerbander-beyonder-ds1823xs-0.0.5-amd64` 构建产物并解压 TAR。
 2. DSM Container Manager → 映像 → 新增 → 从文件添加，选择 TAR。
 3. 新建容器并选择 `host` 网络。
 4. 映射群晖目录（例如 `/volume1/docker/peerbander-beyonder`）到容器 `/data`，权限为读写。
 5. 可设置 `PBB_WEBUI_PORT=9899`；host 模式不要添加端口映射。
 6. 打开 `http://群晖IP:9899`。
-7. 在“设置”中添加一个或多个 qB 地址，逐个测试连接，然后保存并启用自动检查。
+7. 第一次打开页面时创建管理员账号和密码，然后进入后台。
+8. 在“设置”中添加一个或多个 qB 地址，逐个测试连接，然后保存并启用自动检查。
+
+升级时继续映射原来的 `/data` 目录即可，规则、封禁记录和下载器配置都会保留。若忘记管理员密码，需要先停止容器，备份并删除 `/data/auth.json`，再启动容器重新创建管理员。
 
 默认以 UID/GID `1000:1000` 保存持久化文件，可通过 `PUID`、`PGID` 修改。
 
@@ -57,7 +66,7 @@
 | `PGID` | `1000` | 持久化文件用户组 ID |
 | `PBB_LISTEN_ADDRESS` | `0.0.0.0` | 管理页面监听地址 |
 | `PBB_DATA_DIR` | `/data` | 持久化目录 |
-| `PBB_ADMIN_TOKEN` | 空 | 可选的 WebUI/API 管理令牌 |
+| `PBB_ADMIN_TOKEN` | 空 | 可选的旧版 API 管理令牌；浏览器后台仍使用管理员账号登录 |
 | `PBB_QB_URL` | 空 | 可选；迁移/预设第一个 qB 地址 |
 | `PBB_QB_USERNAME` | 空 | 可选；第一个 qB 用户名 |
 | `PBB_QB_PASSWORD` | 空 | 可选；第一个 qB 密码 |
@@ -70,8 +79,8 @@
 
 ```bash
 npm test
-docker build --platform linux/amd64 -t peerbander-beyonder:0.0.4 .
-docker save -o peerbander-beyonder-ds1823xs-0.0.4-amd64.tar peerbander-beyonder:0.0.4
+docker build --platform linux/amd64 -t peerbander-beyonder:0.0.5 .
+docker save -o peerbander-beyonder-ds1823xs-0.0.5-amd64.tar peerbander-beyonder:0.0.5
 ```
 
 GitHub 工作流会执行语法检查、单元测试、容器启动和持久化检查，再生成 TAR 与 SHA-256 文件。

@@ -3,17 +3,19 @@ import { createClientId } from './id.js';
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const COLORS = ['#4c82ff', '#2ecc71', '#f4b942', '#ff5964', '#b07cff', '#23b7c9', '#ff8a4c', '#7d8da8', '#e861a6', '#84cc5b'];
-let token = localStorage.getItem('pbb-token') || '';
+const EVENTS_PAGE_SIZE = 30;
 let rules = [];
 let downloaders = [];
+let eventsPage = 1;
+let eventsTotalPages = 1;
+let eventsRefreshInFlight = false;
 
 async function api(path, options = {}) {
   const headers = { ...(options.body ? { 'content-type': 'application/json' } : {}), ...(options.headers || {}) };
-  if (token) headers.authorization = `Bearer ${token}`;
   const response = await fetch(path, { ...options, headers });
   if (response.status === 401) {
-    $('#tokenDialog').showModal();
-    throw new Error('需要管理令牌');
+    window.location.replace('/login.html');
+    throw new Error('登录已失效，请重新登录');
   }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
@@ -55,7 +57,7 @@ async function refreshStatus() {
     $('#lastError').textContent = status.lastError || '无';
     $('#downloaderStatus').innerHTML = (status.downloaders || []).map((item) => `<div class="mini-card"><strong>${escapeHtml(item.name || item.id)}</strong><span class="${item.connected ? 'ok' : 'error'}">${item.connected ? '正常' : '未连接'}</span><small>${item.connected ? `${escapeHtml(item.version)} · ${item.torrentCount} 个种子 · ${item.peerCount} Peers` : escapeHtml(item.lastError || '')}</small></div>`).join('') || '<p class="hint">尚未连接下载器</p>';
   } catch (error) {
-    if (!String(error).includes('管理令牌')) notify(error.message, true);
+    notify(error.message, true);
   }
 }
 
@@ -68,11 +70,23 @@ async function refreshPeers() {
 }
 
 async function refreshEvents() {
-  const events = await api('/api/events?limit=1000');
-  $('#eventRows').innerHTML = events.map((event) => `<tr><td>${escapeHtml(event.downloaderName || '旧版记录')}</td><td>${escapeHtml(event.target)}</td>
-    <td><span class="tag ${event.action}">${actionName(event.action)}</span></td><td>${displayTime(event.bannedAt || event.timestamp)}</td>
-    <td>${displayTime(event.expiresAt)}</td><td>${event.unbannedAt ? displayTime(event.unbannedAt) : '<span class="ok">生效中</span>'}</td>
-    <td>${escapeHtml(event.client || 'Unknown')}</td><td class="wrap">${escapeHtml(event.reason || '')}${evidenceText(event.evidence)}</td></tr>`).join('') || '<tr><td colspan="8">暂无封禁记录</td></tr>';
+  if (eventsRefreshInFlight) return;
+  eventsRefreshInFlight = true;
+  try {
+    const result = await api(`/api/events?page=${eventsPage}&pageSize=${EVENTS_PAGE_SIZE}`);
+    eventsPage = result.page;
+    eventsTotalPages = result.totalPages;
+    $('#eventRows').innerHTML = result.items.map((event) => `<tr><td>${escapeHtml(event.downloaderName || '旧版记录')}</td><td>${escapeHtml(event.target)}</td>
+      <td><span class="tag ${event.action}">${actionName(event.action)}</span></td><td>${displayTime(event.bannedAt || event.timestamp)}</td>
+      <td>${displayTime(event.expiresAt)}</td><td>${event.unbannedAt ? displayTime(event.unbannedAt) : '<span class="ok">生效中</span>'}</td>
+      <td>${escapeHtml(event.client || 'Unknown')}</td><td class="wrap">${escapeHtml(event.reason || '')}${evidenceText(event.evidence)}</td></tr>`).join('') || '<tr><td colspan="8">暂无封禁记录</td></tr>';
+    $('#eventsPageInfo').textContent = `第 ${result.page} / ${result.totalPages} 页 · 共 ${result.total} 条`;
+    $('#eventsPrev').disabled = result.page <= 1;
+    $('#eventsNext').disabled = result.page >= result.totalPages;
+    $('#eventsRefreshedAt').textContent = `更新于 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
+  } finally {
+    eventsRefreshInFlight = false;
+  }
 }
 
 function evidenceText(evidence) {
@@ -181,8 +195,8 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
 }
 
-$$('nav button').forEach((button) => button.addEventListener('click', async () => {
-  $$('nav button,.tab').forEach((item) => item.classList.remove('active'));
+$$('nav button[data-tab]').forEach((button) => button.addEventListener('click', async () => {
+  $$('nav button[data-tab],.tab').forEach((item) => item.classList.remove('active'));
   button.classList.add('active'); $(`#${button.dataset.tab}`).classList.add('active');
   try {
     if (button.dataset.tab === 'events') await refreshEvents();
@@ -251,12 +265,19 @@ $('#saveRules').addEventListener('click', async () => {
 
 $('#clearEvents').addEventListener('click', async () => {
   if (!confirm('确认清空封禁历史记录？正在生效的封禁不会被解除。')) return;
-  try { await api('/api/events', { method: 'DELETE' }); await refreshEvents(); notify('历史记录已清空'); }
+  try { await api('/api/events', { method: 'DELETE' }); eventsPage = 1; await refreshEvents(); notify('历史记录已清空'); }
   catch (error) { notify(error.message, true); }
 });
 
 $('#refreshAnalytics').addEventListener('click', () => refreshAnalytics().catch((error) => notify(error.message, true)));
-$('#saveToken').addEventListener('click', () => { token = $('#tokenInput').value; localStorage.setItem('pbb-token', token); setTimeout(() => void refreshStatus(), 0); });
+$('#eventsPrev').addEventListener('click', async () => { if (eventsPage > 1) { eventsPage -= 1; await refreshEvents(); } });
+$('#eventsNext').addEventListener('click', async () => { if (eventsPage < eventsTotalPages) { eventsPage += 1; await refreshEvents(); } });
+$('#logoutButton').addEventListener('click', async () => {
+  try { await api('/api/auth/logout', { method: 'POST' }); } finally { window.location.replace('/login.html'); }
+});
 
 await Promise.allSettled([refreshStatus(), refreshPeers()]);
 setInterval(() => { void refreshStatus(); }, 5000);
+setInterval(() => {
+  if ($('#events').classList.contains('active')) void refreshEvents().catch((error) => notify(error.message, true));
+}, 15_000);
