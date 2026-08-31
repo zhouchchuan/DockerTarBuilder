@@ -1,0 +1,90 @@
+From 0cd94d82e90a5285d834b3b86be126bd1f175b31 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local.invalid>
+Date: Sun, 31 Aug 2026 12:30:00 +0800
+Subject: [PATCH] fix(precision): close banned peers without retaining handles
+
+The endpoint plugin retained peer_connection_handle objects and called
+disconnect() from its periodic callback. Under connection churn this could
+invalidate a peer while libtorrent was building a peer-info snapshot, causing
+the repeatable SIGSEGV seen in torrent::get_peer_info(). It also made volatile
+clients such as Xunlei more likely to be disconnected unexpectedly.
+
+Capture the immutable endpoint while new_connection() guarantees that the
+handle is valid. For a banned endpoint, throw from the extension callback and
+let libtorrent perform its documented exception-safe connection shutdown.
+Unbanned peers are never accessed through a stored connection handle.
+---
+ src/base/bittorrent/nativetorrentextension.cpp | 30 +++++++++---------------
+ 1 file changed, 11 insertions(+), 19 deletions(-)
+
+diff --git a/src/base/bittorrent/nativetorrentextension.cpp b/src/base/bittorrent/nativetorrentextension.cpp
+index 9f35688..def7564 100644
+--- a/src/base/bittorrent/nativetorrentextension.cpp
++++ b/src/base/bittorrent/nativetorrentextension.cpp
+@@ -28,10 +28,9 @@
+ 
+ #include "nativetorrentextension.h"
+ 
++#include <stdexcept>
+ #include <utility>
+ 
+-#include <libtorrent/error_code.hpp>
+-#include <libtorrent/operations.hpp>
+ #include <libtorrent/peer_connection_handle.hpp>
+ #include <libtorrent/torrent_status.hpp>
+ 
+@@ -53,32 +52,21 @@ namespace
+     class NativePeerExtension final : public lt::peer_plugin
+     {
+     public:
+-        NativePeerExtension(const lt::peer_connection_handle &connection
++        NativePeerExtension(BitTorrent::PeerAddress endpoint
+             , std::shared_ptr<BitTorrent::PeerEndpointBlocklist> peerEndpointBlocklist)
+-            : m_connection {connection}
++            : m_endpoint {std::move(endpoint)}
+             , m_peerEndpointBlocklist {std::move(peerEndpointBlocklist)}
+         {
+-            disconnectIfBanned();
+         }
+ 
+     private:
+         void tick() override
+         {
+-            disconnectIfBanned();
++            if (m_peerEndpointBlocklist->contains(m_endpoint))
++                throw std::runtime_error {"Peer endpoint is banned"};
+         }
+ 
+-        void disconnectIfBanned()
+-        {
+-            if (m_connection.is_disconnecting())
+-                return;
+-
+-            if (m_peerEndpointBlocklist->contains(fromNativeEndpoint(m_connection.remote())))
+-            {
+-                m_connection.disconnect(lt::errors::peer_banned, lt::operation_t::bittorrent);
+-            }
+-        }
+-
+-        lt::peer_connection_handle m_connection;
++        const BitTorrent::PeerAddress m_endpoint;
+         std::shared_ptr<BitTorrent::PeerEndpointBlocklist> m_peerEndpointBlocklist;
+     };
+ }
+@@ -103,7 +91,11 @@ NativeTorrentExtension::NativeTorrentExtension(const lt::torrent_handle &torrent
+ 
+ std::shared_ptr<lt::peer_plugin> NativeTorrentExtension::new_connection(const lt::peer_connection_handle &connection)
+ {
+-    return std::make_shared<NativePeerExtension>(connection, m_peerEndpointBlocklist);
++    const BitTorrent::PeerAddress endpoint = fromNativeEndpoint(connection.remote());
++    if (m_peerEndpointBlocklist->contains(endpoint))
++        throw std::runtime_error {"Peer endpoint is banned"};
++
++    return std::make_shared<NativePeerExtension>(endpoint, m_peerEndpointBlocklist);
+ }
+ 
+ NativeTorrentExtension::~NativeTorrentExtension()
+-- 
+2.51.0.windows.1
+
+

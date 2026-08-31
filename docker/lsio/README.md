@@ -22,3 +22,13 @@ network thread, and reconnect attempts from the same endpoint remain blocked.
 
 The build runs exact-match tests for IPv4 and IPv6, including the required case
 where `1.1.1.1:1234` is blocked while `1.1.1.1:8526` remains allowed.
+
+Version `0.1.5` fixes a peer-connection lifecycle race found in the `0.1.4`
+crash logs. Exact endpoint enforcement now stores only the immutable `IP:port`
+value and lets libtorrent close a matching connection from its exception-safe
+extension path. It never retains or calls through a live peer-connection handle.
+The embedded libtorrent is updated and pinned to official `v2.0.14`, matching
+the LinuxServer.io 5.2.3 runtime generation. This keeps unblocked connections,
+including Xunlei connections that do not match a rule, out of the enforcement
+path while preserving exact endpoint bans and the original IP-wide ban mode.
+

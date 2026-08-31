@@ -3,8 +3,9 @@
 ARG ALPINE_VERSION=3.24
 FROM alpine:${ALPINE_VERSION} AS builder
 
-ARG LIBTORRENT_REF=v2.0.12
-ARG QBT_PRECISION_VERSION=0.1.4
+ARG LIBTORRENT_REF=v2.0.14
+ARG LIBTORRENT_COMMIT=aab2a10e2f60d9eac78e885a696736d043527794
+ARG QBT_PRECISION_VERSION=0.1.5
 ARG QBT_UPSTREAM_VERSION=5.2.3
 ARG QBT_UPSTREAM_COMMIT=0b63c3d17373f6132ea211c9dcd4241284ccdfaf
 
@@ -31,6 +32,7 @@ RUN git clone \
         --depth 1 \
         --recurse-submodules \
         https://github.com/arvidn/libtorrent.git libtorrent \
+    && test "$(git -C /build/libtorrent rev-parse HEAD)" = "${LIBTORRENT_COMMIT}" \
     && cmake \
         -S libtorrent \
         -B libtorrent/build \
@@ -86,8 +88,8 @@ RUN cmake \
 
 FROM lscr.io/linuxserver/qbittorrent:5.2.3
 
-ARG LIBTORRENT_REF=v2.0.12
-ARG QBT_PRECISION_VERSION=0.1.4
+ARG LIBTORRENT_REF=v2.0.14
+ARG QBT_PRECISION_VERSION=0.1.5
 ARG QBT_UPSTREAM_VERSION=5.2.3
 ARG QBT_UPSTREAM_COMMIT=0b63c3d17373f6132ea211c9dcd4241284ccdfaf
 
@@ -117,3 +119,4 @@ RUN chmod 0755 /app/qbittorrent-nox \
     && /app/qbittorrent-nox --version | grep -F "qBittorrent v${QBT_UPSTREAM_VERSION}" \
     && ldd /app/qbittorrent-nox | tee /runtime-dependencies.txt \
     && ! grep -F "not found" /runtime-dependencies.txt
+
