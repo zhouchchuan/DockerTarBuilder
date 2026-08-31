@@ -195,7 +195,7 @@ jobs:
           # endpoint to the ban list and assert that qBittorrent itself neither
           # exits nor restarts. The second instance is deliberately unmodified:
           # it represents an ordinary BT/Xunlei-compatible peer connection.
-          truncate -s 33554432 "${downloads_dir}/precision-stress.bin"
+          sudo truncate -s 33554432 "${downloads_dir}/precision-stress.bin"
           torrent_file="${RUNNER_TEMP}/precision-stress.torrent"
           STRESS_FILE="${downloads_dir}/precision-stress.bin" \
           TORRENT_FILE="${torrent_file}" \
