@@ -13,7 +13,7 @@ permissions:
 
 env:
   IMAGE_NAME: peerbander-beyonder
-  VERSION: 0.0.5
+  VERSION: 0.0.6
 
 jobs:
   test-and-build:
@@ -64,12 +64,12 @@ jobs:
           curl --fail --silent http://127.0.0.1:19899/api/auth/status | jq -e '.configured == false and .authenticated == false'
           curl --fail --silent --cookie-jar "${RUNNER_TEMP}/cookies.txt" \
             -H "Content-Type: application/json" \
-            --data '{"username":"ci-admin","password":"ci-password-0.0.5"}' \
+            --data '{"username":"ci-admin","password":"ci-password-0.0.6"}' \
             http://127.0.0.1:19899/api/auth/setup | jq -e '.ok == true'
-          ! grep -F "ci-password-0.0.5" "${RUNNER_TEMP}/pbb-data/auth.json"
+          ! grep -F "ci-password-0.0.6" "${RUNNER_TEMP}/pbb-data/auth.json"
           curl --fail --silent --cookie "${RUNNER_TEMP}/cookies.txt" \
             http://127.0.0.1:19899/api/status | tee "${RUNNER_TEMP}/status.json"
-          jq -e '.version == "0.0.5" and .enabled == false' "${RUNNER_TEMP}/status.json"
+          jq -e '.version == "0.0.6" and .enabled == false' "${RUNNER_TEMP}/status.json"
           curl --fail --silent --cookie "${RUNNER_TEMP}/cookies.txt" \
             http://127.0.0.1:19899/api/analytics | jq -e '.monthlyUniqueIPs == 0'
           curl --fail --silent --cookie "${RUNNER_TEMP}/cookies.txt" \
@@ -94,10 +94,10 @@ jobs:
             http://127.0.0.1:19899/api/auth/login)" = "401"
           curl --fail --silent --cookie-jar "${RUNNER_TEMP}/cookies-restart.txt" \
             -H "Content-Type: application/json" \
-            --data '{"username":"ci-admin","password":"ci-password-0.0.5"}' \
+            --data '{"username":"ci-admin","password":"ci-password-0.0.6"}' \
             http://127.0.0.1:19899/api/auth/login | jq -e '.ok == true'
           curl --fail --silent --cookie "${RUNNER_TEMP}/cookies-restart.txt" \
-            http://127.0.0.1:19899/api/status | jq -e '.version == "0.0.5"'
+            http://127.0.0.1:19899/api/status | jq -e '.version == "0.0.6"'
           docker rm -f pbb-ci-restart
 
       - name: Export Synology TAR
@@ -111,7 +111,7 @@ jobs:
       - name: Upload TAR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: peerbander-beyonder-ds1823xs-0.0.5-amd64
+          name: peerbander-beyonder-ds1823xs-0.0.6-amd64
           path: |
             dist/*.tar
             dist/*.sha256

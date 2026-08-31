@@ -116,16 +116,23 @@ export class QBittorrentClient {
   }
 
   async banIPs(ips) {
-    if (!ips.length) return;
-    // qB variants and reverse proxies do not consistently report malformed or
-    // ignored values sent to transfer/banPeers. Merge IP-wide rules through the
-    // same preference used by qB's manual ban list, then preserve any existing
-    // endpoint rules. This makes a successful response mean the rule was
-    // actually persisted.
+    const targets = [...new Set(ips.map((item) => String(item).trim()).filter(Boolean))];
+    if (!targets.length) return;
+
+    // qBittorrent Precision treats plain IP values sent to transfer/banPeers as
+    // IP-wide bans and IP:port values as exact endpoint bans. Use the incremental
+    // API here so a five-second scan does not rewrite the complete manual ban
+    // list and force qB to rebuild its global IP filter for every new batch.
+    await this.postForm('/api/v2/transfer/banPeers', { peers: targets.join('|') });
+
+    // Some older qB variants and reverse proxies return success while ignoring
+    // plain IP values. Verify persistence and use the full-list preference only
+    // as a compatibility fallback for targets that were actually missed.
     const current = await this.bannedPeers();
-    const next = [...new Set([...current, ...ips.map((item) => String(item).trim()).filter(Boolean)])];
-    if (next.length === current.length) return;
-    await this.setBannedPeers(next);
+    const currentSet = new Set(current);
+    const missing = targets.filter((target) => !currentSet.has(target));
+    if (!missing.length) return;
+    await this.setBannedPeers([...current, ...missing]);
   }
 
   async banEndpoints(endpoints) {

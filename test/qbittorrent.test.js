@@ -35,7 +35,12 @@ test('qB client logs in, reads peers and uses separate ban APIs', async (context
       bannedPeers = String(JSON.parse(new URLSearchParams(body).get('json')).banned_IPs || '').split('\n').filter(Boolean);
       return response.end('');
     }
-    if (request.url === '/api/v2/transfer/banPeers' || request.url === '/api/v2/transfer/banPeerEndpoints') return response.end('');
+    if (request.url === '/api/v2/transfer/banPeers') {
+      const targets = String(new URLSearchParams(body).get('peers') || '').split('|').filter(Boolean);
+      bannedPeers = [...new Set([...bannedPeers, ...targets])];
+      return response.end('');
+    }
+    if (request.url === '/api/v2/transfer/banPeerEndpoints') return response.end('');
     response.statusCode = 404;
     response.end('not found');
   });
@@ -54,14 +59,48 @@ test('qB client logs in, reads peers and uses separate ban APIs', async (context
   await client.banEndpoints(['203.0.113.8:6881']);
   await client.removeBans(['198.51.100.7', '203.0.113.8:6881']);
 
+  const ipBan = requests.find((item) => item.url === '/api/v2/transfer/banPeers');
   const endpointBan = requests.find((item) => item.url === '/api/v2/transfer/banPeerEndpoints');
-  assert.equal(requests.some((item) => item.url === '/api/v2/transfer/banPeers'), false);
+  assert.equal(new URLSearchParams(ipBan.body).get('peers'), '198.51.100.7');
   assert.equal(new URLSearchParams(endpointBan.body).get('peers'), '203.0.113.8:6881');
   const preferenceWrites = requests.filter((item) => item.url === '/api/v2/app/setPreferences');
-  assert.deepEqual(JSON.parse(new URLSearchParams(preferenceWrites[0].body).get('json')), {
-    banned_IPs: '203.0.113.8:6881\n192.0.2.1\n198.51.100.7'
-  });
+  assert.equal(preferenceWrites.length, 1);
+  assert.deepEqual(JSON.parse(new URLSearchParams(preferenceWrites[0].body).get('json')), { banned_IPs: '192.0.2.1' });
   assert.deepEqual(bannedPeers, ['192.0.2.1']);
+});
+
+test('qB client falls back to a full-list write only when an incremental IP ban was ignored', async (context) => {
+  const requests = [];
+  let bannedPeers = ['192.0.2.1'];
+  const server = http.createServer(async (request, response) => {
+    const body = await readBody(request);
+    requests.push({ url: request.url, body });
+    if (request.url === '/api/v2/auth/login') {
+      response.setHeader('set-cookie', 'SID=test-session; HttpOnly; Path=/');
+      return response.end('Ok.');
+    }
+    if (request.url === '/api/v2/transfer/banPeers') return response.end('');
+    if (request.url === '/api/v2/app/preferences') {
+      response.setHeader('content-type', 'application/json');
+      return response.end(JSON.stringify({ banned_IPs: bannedPeers.join('\n') }));
+    }
+    if (request.url === '/api/v2/app/setPreferences') {
+      bannedPeers = String(JSON.parse(new URLSearchParams(body).get('json')).banned_IPs || '').split('\n').filter(Boolean);
+      return response.end('');
+    }
+    response.statusCode = 404;
+    response.end('not found');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  context.after(() => server.close());
+
+  const address = server.address();
+  const client = new QBittorrentClient({ url: `http://127.0.0.1:${address.port}`, username: 'admin', password: 'secret' });
+  await client.banIPs(['198.51.100.7']);
+
+  assert.equal(requests.filter((item) => item.url === '/api/v2/transfer/banPeers').length, 1);
+  assert.equal(requests.filter((item) => item.url === '/api/v2/app/setPreferences').length, 1);
+  assert.deepEqual(bannedPeers, ['192.0.2.1', '198.51.100.7']);
 });
 
 test('qB client accepts HTTP 204 login without a cookie for auth-bypass setups', async (context) => {
