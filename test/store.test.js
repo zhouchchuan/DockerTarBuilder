@@ -11,6 +11,7 @@ test('0.0.2 single downloader config migrates without losing its password', asyn
   context.after(() => rm(directory, { recursive: true, force: true }));
   await writeFile(path.join(directory, 'config.json'), JSON.stringify({
     enabled: true,
+    scanIntervalSeconds: 5,
     qbittorrent: { url: 'http://192.0.2.5:9191', username: 'admin', password: 'secret' }
   }));
   await writeFile(path.join(directory, 'rules.json'), JSON.stringify([
@@ -21,6 +22,7 @@ test('0.0.2 single downloader config migrates without losing its password', asyn
   assert.equal(store.config.downloaders.length, 1);
   assert.equal(store.config.downloaders[0].id, 'primary');
   assert.equal(store.config.downloaders[0].password, 'secret');
+  assert.equal(store.config.scanIntervalSeconds, 15);
   assert.equal(store.publicConfig().downloaders[0].password, '********');
   assert.equal(store.rules.filter((rule) => rule.id.startsWith('client-gopeed-')).length, 3);
   assert.ok(store.rules.some((rule) => rule.id === 'custom'));

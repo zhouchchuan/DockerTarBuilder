@@ -21,7 +21,10 @@ test('qB client logs in, reads peers and uses separate ban APIs', async (context
     if (request.url === '/api/v2/app/version') return response.end('v5.2.3');
     if (request.url === '/api/v2/torrents/info?filter=all') {
       response.setHeader('content-type', 'application/json');
-      return response.end(JSON.stringify([{ hash: 'abc', name: 'fixture', state: 'uploading', num_leechs: 1 }]));
+      return response.end(JSON.stringify([
+        { hash: 'abc', name: 'fixture', state: 'uploading', num_leechs: 1 },
+        { hash: 'idle', name: 'idle seeding torrent', state: 'uploading', num_leechs: 0, num_seeds: 0 }
+      ]));
     }
     if (request.url.startsWith('/api/v2/sync/torrentPeers')) {
       response.setHeader('content-type', 'application/json');

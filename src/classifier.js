@@ -43,7 +43,7 @@ export function matchRule(rule, peer) {
   }
 }
 
-export function classifyPeer(peer, rules, options = {}) {
+export function classifyPeer(peer, rules) {
   if (!peer.ip || !peer.port || isProtectedAddress(peer.ip)) {
     return { action: 'allow', reason: 'protected_or_invalid_address', ruleId: null };
   }
@@ -57,16 +57,14 @@ export function classifyPeer(peer, rules, options = {}) {
   if (allow) return { action: 'allow', reason: allow.comment || 'allow_rule', ruleId: allow.id };
 
   const matched = ordered.find((rule) => rule.action !== 'allow' && matchRule(rule, peer));
-  // Xunlei must never be widened to an IP-wide ban. A user-created block rule
-  // is normalized to the exact endpoint, including rules for one version.
+  // Xunlei must never be widened to an IP-wide ban. Only an explicit rule or
+  // an independently confirmed behavior anomaly may block it. A user-created
+  // block rule is normalized to the exact endpoint, including one version.
   if (isXunlei(peer)) {
     if (matched && matched.action !== 'observe') {
       return { action: 'block_endpoint', reason: matched.comment || 'xunlei_rule', ruleId: matched.id };
     }
-    if (options.xunleiProtectionEnabled !== false) {
-      return { action: 'block_endpoint', reason: 'xunlei_precision_endpoint', ruleId: 'builtin-xunlei' };
-    }
-    return { action: matched?.action || 'observe', reason: matched?.comment || 'xunlei_protection_disabled', ruleId: matched?.id || null };
+    return { action: 'observe', reason: matched?.comment || 'xunlei_no_block_rule', ruleId: matched?.id || null };
   }
 
   if (!matched) return { action: 'observe', reason: 'no_rule_matched', ruleId: null };

@@ -225,9 +225,13 @@ export class Engine {
 
   async scanDownloader(config, client, now) {
     const qbVersion = await client.version();
+    await this.retireLegacyXunleiBans(config.id, client, now);
     await this.reconcileActiveBans(config.id, client, now);
     const torrents = await client.torrents();
-    const peerGroups = await mapLimit(torrents, 6, async (torrent) => ({
+    // Keep qB's Web API responsive on large seed libraries. Only torrents with
+    // connected peers reach this point and at most two peer lists are fetched
+    // concurrently.
+    const peerGroups = await mapLimit(torrents, 2, async (torrent) => ({
       torrent,
       peers: await client.peers(torrent.hash)
     }));
@@ -254,10 +258,16 @@ export class Engine {
           torrentSize: Number(torrent.total_size || torrent.size || 0),
           clientFamily: family
         };
-        let decision = classifyPeer(enriched, this.store.rules, this.store.config.behavior);
+        let decision = classifyPeer(enriched, this.store.rules);
         let behavior = null;
         if (decision.action !== 'allow') {
-          behavior = evaluateBehavior({ peer: enriched, torrent, session, config: this.store.config.behavior });
+          const behaviorConfig = {
+            ...this.store.config.behavior,
+            enabled: isXunlei(enriched)
+              ? this.store.config.behavior.xunleiProtectionEnabled === true
+              : this.store.config.behavior.enabled === true
+          };
+          behavior = evaluateBehavior({ peer: enriched, torrent, session, config: behaviorConfig });
           if (behavior && decision.action === 'observe') {
             decision = { action: behavior.action, reason: behavior.reason, ruleId: `behavior-${behavior.kind}` };
           }
@@ -314,6 +324,7 @@ export class Engine {
         downloaderName: config.name,
         target,
         action: record.decision.action,
+        ruleId: record.decision.ruleId,
         bannedAt,
         expiresAt
       });
@@ -346,6 +357,25 @@ export class Engine {
       clientFamily: family,
       category
     };
+  }
+
+  async retireLegacyXunleiBans(downloaderId, client, now) {
+    const eventById = new Map(this.store.events.map((event) => [event.id, event]));
+    const legacy = this.store.runtime.activeBans.filter((ban) => {
+      if (ban.downloaderId !== downloaderId) return false;
+      const event = eventById.get(ban.eventId);
+      return ban.ruleId === 'builtin-xunlei' || event?.ruleId === 'builtin-xunlei';
+    });
+    if (!legacy.length) return;
+
+    await client.removeBans(legacy.map((ban) => ban.target));
+    const legacySet = new Set(legacy);
+    this.store.runtime.activeBans = this.store.runtime.activeBans.filter((ban) => !legacySet.has(ban));
+    const timestamp = new Date(now).toISOString();
+    await Promise.all([
+      this.store.markEventsUnbanned(legacy.map((ban) => ban.eventId), timestamp),
+      this.store.saveRuntime()
+    ]);
   }
 
   async reconcileActiveBans(downloaderId, client, now) {

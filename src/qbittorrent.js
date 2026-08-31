@@ -181,6 +181,7 @@ export class QBittorrentClient {
 }
 
 function shouldInspectTorrent(torrent) {
-  if (Number(torrent.num_leechs || 0) > 0 || Number(torrent.num_seeds || 0) > 0) return true;
-  return /upload|download|stalled|forced|meta/i.test(String(torrent.state || ''));
+  // qB exposes connected peer counts separately from the torrent state. A
+  // seeding/uploading state alone does not mean that a peer is connected.
+  return Number(torrent.num_leechs || 0) > 0 || Number(torrent.num_seeds || 0) > 0;
 }

@@ -1,6 +1,6 @@
 FROM node:22-alpine
 
-ARG VERSION=0.0.6
+ARG VERSION=0.0.7
 LABEL org.opencontainers.image.title="PeerBander Beyonder" \
       org.opencontainers.image.description="Precision peer-control companion for qBittorrent Precision" \
       org.opencontainers.image.version="${VERSION}" \

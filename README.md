@@ -1,6 +1,14 @@
-# PeerBander Beyonder 0.0.6
+# PeerBander Beyonder 0.0.7
 
 面向群晖 DS1823xs+ 的独立 qBittorrent Peer 防护容器。它通过 qBittorrent Web API 读取活动种子和 Peer，并把封禁目标写入 qBittorrent Precision 的封禁列表。
+
+## 0.0.7 修复
+
+- 修复“启用迅雷反吸血”被错误实现为无条件封禁所有迅雷的问题。现在未命中规则且行为正常的迅雷保持连接；只有明确的迅雷封禁规则或确认的过度下载/进度倒退才精准封禁当前 `IP:端口`。
+- 升级后自动解除由旧版 `builtin-xunlei` 逻辑产生且仍被 Beyonder 跟踪的迅雷 Endpoint 封禁，保留手工规则和其他封禁。
+- 仅为当前确有 Peer 连接的种子请求 Peer 列表，不再轮询大量零连接做种任务。
+- 每个下载器的 Peer 列表并发请求从6降为2，默认及最低检查间隔改为15秒，防止周期性 Web API 洪峰拖慢 qB 新连接。
+- 保留 0.0.6 的增量整 IP 封禁、精准 Endpoint 封禁及全部后台功能。
 
 ## 0.0.6 修复
 
@@ -52,7 +60,7 @@
 
 ## 群晖 DS1823xs+ 安装
 
-1. 从 GitHub Actions 下载 `peerbander-beyonder-ds1823xs-0.0.6-amd64` 构建产物并解压 TAR。
+1. 从 GitHub Actions 下载 `peerbander-beyonder-ds1823xs-0.0.7-amd64` 构建产物并解压 TAR。
 2. DSM Container Manager → 映像 → 新增 → 从文件添加，选择 TAR。
 3. 新建容器并选择 `host` 网络。
 4. 映射群晖目录（例如 `/volume1/docker/peerbander-beyonder`）到容器 `/data`，权限为读写。
@@ -78,7 +86,7 @@
 | `PBB_QB_URL` | 空 | 可选；迁移/预设第一个 qB 地址 |
 | `PBB_QB_USERNAME` | 空 | 可选；第一个 qB 用户名 |
 | `PBB_QB_PASSWORD` | 空 | 可选；第一个 qB 密码 |
-| `PBB_SCAN_INTERVAL` | `5` | 扫描间隔（秒） |
+| `PBB_SCAN_INTERVAL` | `15` | 扫描间隔（秒，最低15秒） |
 | `PBB_ENABLED` | `false` | 启动后立即扫描 |
 
 ## 本地测试与构建
@@ -87,8 +95,8 @@
 
 ```bash
 npm test
-docker build --platform linux/amd64 -t peerbander-beyonder:0.0.6 .
-docker save -o peerbander-beyonder-ds1823xs-0.0.6-amd64.tar peerbander-beyonder:0.0.6
+docker build --platform linux/amd64 -t peerbander-beyonder:0.0.7 .
+docker save -o peerbander-beyonder-ds1823xs-0.0.7-amd64.tar peerbander-beyonder:0.0.7
 ```
 
 GitHub 工作流会执行语法检查、单元测试、容器启动和持久化检查，再生成 TAR 与 SHA-256 文件。

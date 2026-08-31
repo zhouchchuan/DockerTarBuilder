@@ -8,9 +8,10 @@ const rules = [
   { id: 'hp', enabled: true, priority: 100, field: 'peerId', operator: 'startsWith', pattern: '-hp', action: 'block_ip', comment: 'pure leecher' }
 ];
 
-test('Xunlei client is blocked by exact endpoint', () => {
+test('unmatched Xunlei client is observed instead of blocked', () => {
   const result = classifyPeer({ ip: '203.0.113.10', port: 6881, client: 'Xunlei 0.0.1.7', peerId: '-XL0017-' }, rules);
-  assert.equal(result.action, 'block_endpoint');
+  assert.equal(result.action, 'observe');
+  assert.equal(result.ruleId, null);
 });
 
 test('Xunlei version allow rule overrides builtin endpoint action', () => {
@@ -19,11 +20,11 @@ test('Xunlei version allow rule overrides builtin endpoint action', () => {
   assert.equal(result.ruleId, 'allow-19');
 });
 
-test('Xunlei block IP rule is forced to endpoint and protection can be disabled', () => {
+test('Xunlei block IP rule is forced to endpoint', () => {
   const block = [{ id: 'x', enabled: true, priority: 10, field: 'client', operator: 'contains', pattern: '0.0.1.7', action: 'block_ip', comment: 'blocked version' }];
   const peer = { ip: '203.0.113.10', port: 6881, client: 'Xunlei 0.0.1.7', peerId: '-XL0017-' };
   assert.equal(classifyPeer(peer, block).action, 'block_endpoint');
-  assert.equal(classifyPeer(peer, [], { xunleiProtectionEnabled: false }).action, 'observe');
+  assert.equal(classifyPeer(peer, []).action, 'observe');
 });
 
 test('pure leecher signature blocks whole public IP', () => {

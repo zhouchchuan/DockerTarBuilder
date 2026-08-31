@@ -91,6 +91,7 @@ export class Store {
     this.events = await readJson(this.eventsFile, []);
     this.runtime = mergeRuntime(await readJson(this.runtimeFile, DEFAULT_RUNTIME));
     this.applyEnvironment();
+    this.config.scanIntervalSeconds = clampNumber(this.config.scanIntervalSeconds, 15, 300, 15);
     await Promise.all([
       this.writeAtomic(this.configFile, this.config),
       this.writeAtomic(this.rulesFile, this.rules),
@@ -151,7 +152,7 @@ export class Store {
         return normalized;
       });
     }
-    next.scanIntervalSeconds = clampNumber(next.scanIntervalSeconds, 2, 300, 5);
+    next.scanIntervalSeconds = clampNumber(next.scanIntervalSeconds, 15, 300, 15);
     next.eventLimit = clampNumber(next.eventLimit, 100, 50_000, 5000);
     next.decisionCooldownSeconds = clampNumber(next.decisionCooldownSeconds, 30, 86_400, 600);
     next.banDurationDays = clampNumber(next.banDurationDays, 1, 365, 7);

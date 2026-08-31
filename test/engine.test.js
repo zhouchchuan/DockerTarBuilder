@@ -10,7 +10,10 @@ test('engine isolates multiple downloaders and writes timed IP/endpoint bans', a
     { id: 'd1', name: 'qB 1', enabled: true, url: 'http://127.0.0.1:1', username: 'a', password: 'b' },
     { id: 'd2', name: 'qB 2', enabled: true, url: 'http://127.0.0.1:2', username: 'a', password: 'b' }
   ];
-  store.rules = [{ id: 'hp', enabled: true, priority: 100, field: 'peerId', operator: 'startsWith', pattern: '-hp', action: 'block_ip', comment: 'pure' }];
+  store.rules = [
+    { id: 'hp', enabled: true, priority: 100, field: 'peerId', operator: 'startsWith', pattern: '-hp', action: 'block_ip', comment: 'pure' },
+    { id: 'xunlei-17', enabled: true, priority: 100, field: 'client', operator: 'contains', pattern: '0.0.1.7', action: 'block_ip', comment: 'blocked version' }
+  ];
   store.addEvents = async (events) => { addedEvents.push(...events); store.events.unshift(...events); };
   const engine = new Engine(store);
   const calls = { d1IPs: [], d1Endpoints: [], d2IPs: [] };
@@ -31,6 +34,47 @@ test('engine isolates multiple downloaders and writes timed IP/endpoint bans', a
   assert.equal(addedEvents.length, 2);
   assert.ok(addedEvents.every((event) => Date.parse(event.expiresAt) - Date.parse(event.bannedAt) === 7 * 86400000));
   assert.equal(store.runtime.activeBans.length, 2);
+});
+
+test('Xunlei behavior protection blocks only anomalous endpoint and leaves a normal Xunlei peer connected', async () => {
+  const store = fixtureStore();
+  store.config.downloaders = [{ id: 'd1', name: 'qB 1', enabled: true, url: 'http://127.0.0.1:1', username: 'a', password: 'b' }];
+  store.config.behavior = {
+    enabled: false,
+    xunleiProtectionEnabled: true,
+    minimumUploadedBytes: 50_000_000,
+    excessProgressPercent: 10,
+    progressRewindPercent: 10
+  };
+  const endpointCalls = [];
+  const engine = new Engine(store);
+  engine.clients.set('d1', fakeClient([
+    { ip: '203.0.113.11', port: 51413, client: 'Xunlei 0.0.1.7', peerId: '-XL0017-', progress: 0.65, uploaded: 100_000_000 },
+    { ip: '203.0.113.12', port: 51414, client: 'Xunlei 0.0.1.7', peerId: '-XL0017-', progress: 0.1, uploaded: 500_000_000 }
+  ], [], endpointCalls));
+
+  const result = await engine.scan();
+  assert.equal(result.ok, true);
+  assert.deepEqual(endpointCalls, ['203.0.113.12:51414']);
+  assert.equal(store.events.length, 1);
+  assert.equal(store.events[0].ruleId, 'behavior-over_download');
+});
+
+test('legacy builtin Xunlei endpoint bans are removed once during upgrade', async () => {
+  const store = fixtureStore();
+  store.config.downloaders = [{ id: 'd1', name: 'qB 1', enabled: true, url: 'http://127.0.0.1:1', username: 'a', password: 'b' }];
+  store.runtime.activeBans = [{ eventId: 'legacy', downloaderId: 'd1', target: '203.0.113.9:51413', action: 'block_endpoint', expiresAt: '2026-09-06T00:00:00.000Z' }];
+  store.events = [{ id: 'legacy', ruleId: 'builtin-xunlei' }];
+  const removed = [];
+  const engine = new Engine(store);
+  const client = fakeClient([], [], []);
+  client.removeBans = async (targets) => removed.push(...targets);
+  engine.clients.set('d1', client);
+
+  const result = await engine.scan();
+  assert.equal(result.ok, true);
+  assert.deepEqual(removed, ['203.0.113.9:51413']);
+  assert.equal(store.runtime.activeBans.length, 0);
 });
 
 test('expired bans are removed from their downloader and history is marked', async () => {

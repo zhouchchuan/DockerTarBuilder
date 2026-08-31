@@ -1,9 +1,9 @@
-export const VERSION = '0.0.6';
+export const VERSION = '0.0.7';
 
 export const DEFAULT_CONFIG = Object.freeze({
-  schemaVersion: 3,
+  schemaVersion: 4,
   enabled: false,
-  scanIntervalSeconds: 5,
+  scanIntervalSeconds: 15,
   eventLimit: 5000,
   decisionCooldownSeconds: 600,
   banDurationDays: 7,
