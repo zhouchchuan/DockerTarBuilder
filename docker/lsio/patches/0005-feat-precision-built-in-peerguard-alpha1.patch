@@ -1,5 +1,5 @@
 diff --git a/src/base/CMakeLists.txt b/src/base/CMakeLists.txt
-index c5d94fd..8f5e915 100644
+index c5d94fde6842990aecc3c3bd46c0c74abc511fa4..8f5e9153c7bbe46b94b96028517772f918e0006f 100644
 --- a/src/base/CMakeLists.txt
 +++ b/src/base/CMakeLists.txt
 @@ -28,6 +28,10 @@ add_library(qbt_base STATIC
@@ -25,7 +25,7 @@ index c5d94fd..8f5e915 100644
      bittorrent/peerinfo.cpp
      bittorrent/portforwarderimpl.cpp
 diff --git a/src/base/bittorrent/nativesessionextension.cpp b/src/base/bittorrent/nativesessionextension.cpp
-index 7235ab2..7d00171 100644
+index 7235ab2e033d349a60692d8729c6ce1121f38754..7d001711a121d800b1e15bf9be4d152cc6b013bd 100644
 --- a/src/base/bittorrent/nativesessionextension.cpp
 +++ b/src/base/bittorrent/nativesessionextension.cpp
 @@ -53,6 +53,26 @@ void NativeSessionExtension::banPeerEndpoint(const BitTorrent::PeerAddress &endp
@@ -65,7 +65,7 @@ index 7235ab2..7d00171 100644
  
  void NativeSessionExtension::on_alert(const lt::alert *alert)
 diff --git a/src/base/bittorrent/nativesessionextension.h b/src/base/bittorrent/nativesessionextension.h
-index 093f651..bc5fafd 100644
+index 093f6514a66ceb0f2c90139b817521ccb01b40f3..bc5fafd9a92291fe987d61fe95b0d099eb36fb6b 100644
 --- a/src/base/bittorrent/nativesessionextension.h
 +++ b/src/base/bittorrent/nativesessionextension.h
 @@ -35,6 +35,7 @@
@@ -96,7 +96,7 @@ index 093f651..bc5fafd 100644
          = std::make_shared<BitTorrent::PeerEndpointBlocklist>();
  };
 diff --git a/src/base/bittorrent/nativetorrentextension.cpp b/src/base/bittorrent/nativetorrentextension.cpp
-index 9f35688..616192d 100644
+index 9f356886cdaef4fcd598f64fd64aec3d3f3d8a30..616192dac56b265188a96e534beafe427214a59c 100644
 --- a/src/base/bittorrent/nativetorrentextension.cpp
 +++ b/src/base/bittorrent/nativetorrentextension.cpp
 @@ -28,16 +28,19 @@
@@ -260,7 +260,7 @@ index 9f35688..616192d 100644
  
  NativeTorrentExtension::~NativeTorrentExtension()
 diff --git a/src/base/bittorrent/nativetorrentextension.h b/src/base/bittorrent/nativetorrentextension.h
-index 4d7107d..40a3813 100644
+index 4d7107d76d862a8d5e539628c7197348f2513ce8..40a3813ce9566fbd053562db813aad98d1125aa2 100644
 --- a/src/base/bittorrent/nativetorrentextension.h
 +++ b/src/base/bittorrent/nativetorrentextension.h
 @@ -34,6 +34,7 @@
@@ -291,10 +291,10 @@ index 4d7107d..40a3813 100644
  };
 diff --git a/src/base/bittorrent/peerbandermanager.cpp b/src/base/bittorrent/peerbandermanager.cpp
 new file mode 100644
-index 0000000..19562f3
+index 0000000000000000000000000000000000000000..8df813e064b8f3a76f7dba275b22d6e57471c540
 --- /dev/null
 +++ b/src/base/bittorrent/peerbandermanager.cpp
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,218 @@
 +/*
 + * qBittorrent Precision PeerBander
 + * Copyright (C) 2026 qBittorrent Precision contributors
@@ -515,7 +515,7 @@ index 0000000..19562f3
 +}
 diff --git a/src/base/bittorrent/peerbandermanager.h b/src/base/bittorrent/peerbandermanager.h
 new file mode 100644
-index 0000000..cbce365
+index 0000000000000000000000000000000000000000..cbce365ac1bd5f411e52f3f8d6c30e1305b0c147
 --- /dev/null
 +++ b/src/base/bittorrent/peerbandermanager.h
 @@ -0,0 +1,72 @@
@@ -593,7 +593,7 @@ index 0000000..cbce365
 +}
 diff --git a/src/base/bittorrent/peerbanderruleengine.cpp b/src/base/bittorrent/peerbanderruleengine.cpp
 new file mode 100644
-index 0000000..caee0ba
+index 0000000000000000000000000000000000000000..caee0ba77487b987df4e35e979d2947ee9e46692
 --- /dev/null
 +++ b/src/base/bittorrent/peerbanderruleengine.cpp
 @@ -0,0 +1,82 @@
@@ -681,7 +681,7 @@ index 0000000..caee0ba
 +}
 diff --git a/src/base/bittorrent/peerbanderruleengine.h b/src/base/bittorrent/peerbanderruleengine.h
 new file mode 100644
-index 0000000..ebe0bb0
+index 0000000000000000000000000000000000000000..ebe0bb0ac5728ae397d802691ca5e2c9a0b2e418
 --- /dev/null
 +++ b/src/base/bittorrent/peerbanderruleengine.h
 @@ -0,0 +1,32 @@
@@ -719,7 +719,7 @@ index 0000000..ebe0bb0
 +}
 diff --git a/src/base/bittorrent/peerbanderstore.cpp b/src/base/bittorrent/peerbanderstore.cpp
 new file mode 100644
-index 0000000..e577453
+index 0000000000000000000000000000000000000000..b0d8604147bd5fdd2790a56d48024ca2e50bf2ff
 --- /dev/null
 +++ b/src/base/bittorrent/peerbanderstore.cpp
 @@ -0,0 +1,374 @@
@@ -1099,7 +1099,7 @@ index 0000000..e577453
 +}
 diff --git a/src/base/bittorrent/peerbanderstore.h b/src/base/bittorrent/peerbanderstore.h
 new file mode 100644
-index 0000000..4569617
+index 0000000000000000000000000000000000000000..456961771baa8793e4418d383fc8ecd112043774
 --- /dev/null
 +++ b/src/base/bittorrent/peerbanderstore.h
 @@ -0,0 +1,52 @@
@@ -1157,7 +1157,7 @@ index 0000000..4569617
 +}
 diff --git a/src/base/bittorrent/peerbandertypes.cpp b/src/base/bittorrent/peerbandertypes.cpp
 new file mode 100644
-index 0000000..b709380
+index 0000000000000000000000000000000000000000..b709380b4d6831c354f66fdffe04ef46d90f472c
 --- /dev/null
 +++ b/src/base/bittorrent/peerbandertypes.cpp
 @@ -0,0 +1,117 @@
@@ -1280,7 +1280,7 @@ index 0000000..b709380
 +}
 diff --git a/src/base/bittorrent/peerbandertypes.h b/src/base/bittorrent/peerbandertypes.h
 new file mode 100644
-index 0000000..d64262e
+index 0000000000000000000000000000000000000000..ff3a07d75401b7b47121750b5e0f8595162910fa
 --- /dev/null
 +++ b/src/base/bittorrent/peerbandertypes.h
 @@ -0,0 +1,89 @@
@@ -1374,7 +1374,7 @@ index 0000000..d64262e
 +    ClientIdentity identifyClient(QStringView client, QStringView peerId = {});
 +}
 diff --git a/src/base/bittorrent/peerendpointblocklist.cpp b/src/base/bittorrent/peerendpointblocklist.cpp
-index 38d7e69..d6862c6 100644
+index 38d7e699c5d1448b5c108564258e3d4903286e44..d6862c677181bd70191df644410eab34f406070c 100644
 --- a/src/base/bittorrent/peerendpointblocklist.cpp
 +++ b/src/base/bittorrent/peerendpointblocklist.cpp
 @@ -10,16 +10,27 @@
@@ -1451,7 +1451,7 @@ index 38d7e69..d6862c6 100644
  {
      QSet<PeerAddress> parsedEndpoints;
 diff --git a/src/base/bittorrent/peerendpointblocklist.h b/src/base/bittorrent/peerendpointblocklist.h
-index 986704c..a9296ca 100644
+index 986704c93d20278676fda721a64dbeffc1c3ef8c..a9296ca44b977ab78789af876f27a57dc9252b1c 100644
 --- a/src/base/bittorrent/peerendpointblocklist.h
 +++ b/src/base/bittorrent/peerendpointblocklist.h
 @@ -10,6 +10,7 @@
@@ -1479,7 +1479,7 @@ index 986704c..a9296ca 100644
      };
  }
 diff --git a/src/base/bittorrent/session.h b/src/base/bittorrent/session.h
-index 026d0d0..297a905 100644
+index 026d0d0f797e13d781e88e2a0d2f075f5eda9c29..297a905c5e4289cc18254961d54567e59a83bdd7 100644
 --- a/src/base/bittorrent/session.h
 +++ b/src/base/bittorrent/session.h
 @@ -42,10 +42,16 @@
@@ -1513,7 +1513,7 @@ index 026d0d0..297a905 100644
          virtual bool isKnownTorrent(const InfoHash &infoHash) const = 0;
          virtual bool addTorrent(const TorrentDescriptor &torrentDescr, const AddTorrentParams &params = {}) = 0;
 diff --git a/src/base/bittorrent/sessionimpl.cpp b/src/base/bittorrent/sessionimpl.cpp
-index c56e7bb..134269c 100644
+index c56e7bbfa61a45cbd8b63db39785dfbd9ffeb057..134269c2577a61d481b3596c1dd92d28e7ce6c48 100644
 --- a/src/base/bittorrent/sessionimpl.cpp
 +++ b/src/base/bittorrent/sessionimpl.cpp
 @@ -106,6 +106,7 @@
@@ -1582,7 +1582,7 @@ index c56e7bb..134269c 100644
  {
      QStringList normalizedEndpoints;
 diff --git a/src/base/bittorrent/sessionimpl.h b/src/base/bittorrent/sessionimpl.h
-index 3374d01..9b425ae 100644
+index 3374d01afebe392181918b192b8ac12dc19167ba..9b425aea4a8750177fc937728127f492aecbba30 100644
 --- a/src/base/bittorrent/sessionimpl.h
 +++ b/src/base/bittorrent/sessionimpl.h
 @@ -74,6 +74,11 @@ struct FileSearchResult;
@@ -1619,7 +1619,7 @@ index 3374d01..9b425ae 100644
          bool m_deferredConfigureScheduled = false;
          bool m_IPFilteringConfigured = false;
 diff --git a/src/webui/CMakeLists.txt b/src/webui/CMakeLists.txt
-index 4597ed4..c1f1bbd 100644
+index 4597ed4681ec36bfe50d2c989eb17a7dce92551c..c1f1bbd030c776d59b26728067c31862e26a712d 100644
 --- a/src/webui/CMakeLists.txt
 +++ b/src/webui/CMakeLists.txt
 @@ -8,6 +8,7 @@ add_library(qbt_webui STATIC
@@ -1640,7 +1640,7 @@ index 4597ed4..c1f1bbd 100644
      api/synccontroller.cpp
 diff --git a/src/webui/api/peerbandercontroller.cpp b/src/webui/api/peerbandercontroller.cpp
 new file mode 100644
-index 0000000..ed5459f
+index 0000000000000000000000000000000000000000..ed5459f8570c12580780d4dd4c78c9ee860ad689
 --- /dev/null
 +++ b/src/webui/api/peerbandercontroller.cpp
 @@ -0,0 +1,239 @@
@@ -1885,7 +1885,7 @@ index 0000000..ed5459f
 +}
 diff --git a/src/webui/api/peerbandercontroller.h b/src/webui/api/peerbandercontroller.h
 new file mode 100644
-index 0000000..375aa3e
+index 0000000000000000000000000000000000000000..375aa3e50bde56686f9dcfb0857249fedff1060e
 --- /dev/null
 +++ b/src/webui/api/peerbandercontroller.h
 @@ -0,0 +1,35 @@
@@ -1925,7 +1925,7 @@ index 0000000..375aa3e
 +    void scanNowAction();
 +};
 diff --git a/src/webui/webapplication.cpp b/src/webui/webapplication.cpp
-index 91d9c80..2d6a489 100644
+index 91d9c80fd1c8615e690c6888434c742579a541a9..2d6a4891d5d4c785a284639f195101a59b34e84c 100644
 --- a/src/webui/webapplication.cpp
 +++ b/src/webui/webapplication.cpp
 @@ -63,6 +63,7 @@
@@ -1945,7 +1945,7 @@ index 91d9c80..2d6a489 100644
      m_currentSession->registerAPIController(u"rss"_s, new RSSController(app(), m_currentSession));
      m_currentSession->registerAPIController(u"search"_s, new SearchController(app(), m_currentSession));
 diff --git a/src/webui/webapplication.h b/src/webui/webapplication.h
-index 68ea999..8af5464 100644
+index 68ea999321b59431b822b4e55203435e0eb889fa..8af54647ee62ea510075596cbe74b485304eb310 100644
 --- a/src/webui/webapplication.h
 +++ b/src/webui/webapplication.h
 @@ -173,6 +173,11 @@ private:
@@ -1961,7 +1961,7 @@ index 68ea999..8af5464 100644
          {{u"rss"_s, u"addFolder"_s}, Http::METHOD_POST},
          {{u"rss"_s, u"markAsRead"_s}, Http::METHOD_POST},
 diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
-index e60caf5..ab4108c 100644
+index e60caf5443df46042bef733c03a4787088166974..ab4108c9a62101e248c139440b923dbea6ed34d7 100644
 --- a/test/CMakeLists.txt
 +++ b/test/CMakeLists.txt
 @@ -8,6 +8,7 @@ include_directories("../src")
@@ -1974,10 +1974,10 @@ index e60caf5..ab4108c 100644
      testconceptsexplicitlyconvertibleto.cpp
 diff --git a/test/testbittorrentpeerbanderruleengine.cpp b/test/testbittorrentpeerbanderruleengine.cpp
 new file mode 100644
-index 0000000..893eb16
+index 0000000000000000000000000000000000000000..ab3a7a4403daebe516a967ed32083a4e62ee6fd8
 --- /dev/null
 +++ b/test/testbittorrentpeerbanderruleengine.cpp
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,127 @@
 +/*
 + * qBittorrent Precision PeerBander tests
 + * Copyright (C) 2026 qBittorrent Precision contributors
@@ -2106,7 +2106,7 @@ index 0000000..893eb16
 +QTEST_APPLESS_MAIN(TestPeerBanderRuleEngine)
 +#include "testbittorrentpeerbanderruleengine.moc"
 diff --git a/test/testbittorrentpeerendpointblocklist.cpp b/test/testbittorrentpeerendpointblocklist.cpp
-index 5408e0b..ed0b490 100644
+index 5408e0bbd77ccadf31d33f4046b6dcd471570e5e..ed0b490f962f4f23f14b7a229f1edf4001c904d2 100644
 --- a/test/testbittorrentpeerendpointblocklist.cpp
 +++ b/test/testbittorrentpeerendpointblocklist.cpp
 @@ -9,6 +9,7 @@
