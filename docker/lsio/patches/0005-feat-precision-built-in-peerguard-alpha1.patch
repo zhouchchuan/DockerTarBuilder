@@ -319,6 +319,7 @@ index 0000000..19562f3
 +using namespace std::chrono_literals;
 +using namespace BitTorrent;
 +using namespace BitTorrent::PeerBander;
++using namespace Qt::Literals::StringLiterals;
 +
 +Manager::Manager(Session *session, QObject *parent)
 +    : QObject(parent)
@@ -1993,7 +1994,7 @@ index 0000000..893eb16
 +
 +using namespace BitTorrent;
 +using namespace BitTorrent::PeerBander;
-+using namespace Qt::StringLiterals;
++using namespace Qt::Literals::StringLiterals;
 +
 +class TestPeerBanderRuleEngine final : public QObject
 +{
