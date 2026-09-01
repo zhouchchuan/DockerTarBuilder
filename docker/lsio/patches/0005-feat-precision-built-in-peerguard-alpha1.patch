@@ -2082,7 +2082,7 @@ index 0000000000000000000000000000000000000000..ab3a7a4403daebe516a967ed32083a4e
 +
 +    const PeerContext matching
 +    {
-+        .endpoint = {.ip = QHostAddress(u"192.0.2.8"), .port = 6881},
++        .endpoint = {.ip = QHostAddress(u"192.0.2.8"_s), .port = 6881},
 +        .peerId = u"-XL0019-"_s
 +    };
 +    QCOMPARE(engine.evaluate(matching).action, Action::BlockEndpoint);
@@ -2133,7 +2133,7 @@ index 5408e0bbd77ccadf31d33f4046b6dcd471570e5e..ed0b490f962f4f23f14b7a229f1edf40
 +        QVERIFY(blocklist.contains(BitTorrent::PeerAddress::parse(u"1.1.1.1:1234")));
 +        QVERIFY(!blocklist.contains(BitTorrent::PeerAddress::parse(u"1.1.1.1:8526")));
 +
-+        blocklist.addTemporaryIP(QHostAddress(u"2.2.2.2"), future);
++        blocklist.addTemporaryIP(QHostAddress(u"2.2.2.2"_s), future);
 +        QVERIFY(blocklist.contains(BitTorrent::PeerAddress::parse(u"2.2.2.2:1234")));
 +        QVERIFY(blocklist.contains(BitTorrent::PeerAddress::parse(u"2.2.2.2:8526")));
 +
@@ -2146,5 +2146,4 @@ index 5408e0bbd77ccadf31d33f4046b6dcd471570e5e..ed0b490f962f4f23f14b7a229f1edf40
  };
  
  QTEST_APPLESS_MAIN(TestBittorrentPeerEndpointBlocklist)
-
 
