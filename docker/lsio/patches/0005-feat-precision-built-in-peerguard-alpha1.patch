@@ -1,0 +1,2148 @@
+diff --git a/src/base/CMakeLists.txt b/src/base/CMakeLists.txt
+index c5d94fd..8f5e915 100644
+--- a/src/base/CMakeLists.txt
++++ b/src/base/CMakeLists.txt
+@@ -28,6 +28,10 @@ add_library(qbt_base STATIC
+     bittorrent/nativesessionextension.h
+     bittorrent/nativetorrentextension.h
+     bittorrent/peeraddress.h
++    bittorrent/peerbandermanager.h
++    bittorrent/peerbanderruleengine.h
++    bittorrent/peerbanderstore.h
++    bittorrent/peerbandertypes.h
+     bittorrent/peerendpointblocklist.h
+     bittorrent/peerinfo.h
+     bittorrent/portforwarderimpl.h
+@@ -145,6 +149,10 @@ add_library(qbt_base STATIC
+     bittorrent/nativesessionextension.cpp
+     bittorrent/nativetorrentextension.cpp
+     bittorrent/peeraddress.cpp
++    bittorrent/peerbandermanager.cpp
++    bittorrent/peerbanderruleengine.cpp
++    bittorrent/peerbanderstore.cpp
++    bittorrent/peerbandertypes.cpp
+     bittorrent/peerendpointblocklist.cpp
+     bittorrent/peerinfo.cpp
+     bittorrent/portforwarderimpl.cpp
+diff --git a/src/base/bittorrent/nativesessionextension.cpp b/src/base/bittorrent/nativesessionextension.cpp
+index 7235ab2..7d00171 100644
+--- a/src/base/bittorrent/nativesessionextension.cpp
++++ b/src/base/bittorrent/nativesessionextension.cpp
+@@ -53,6 +53,26 @@ void NativeSessionExtension::banPeerEndpoint(const BitTorrent::PeerAddress &endp
+     m_peerEndpointBlocklist->add(endpoint);
+ }
+ 
++void NativeSessionExtension::blockPeerEndpointTemporarily(const BitTorrent::PeerAddress &endpoint, const qint64 expiresAt)
++{
++    m_peerEndpointBlocklist->addTemporaryEndpoint(endpoint, expiresAt);
++}
++
++void NativeSessionExtension::blockPeerIPTemporarily(const QHostAddress &ip, const qint64 expiresAt)
++{
++    m_peerEndpointBlocklist->addTemporaryIP(ip, expiresAt);
++}
++
++void NativeSessionExtension::pruneTemporaryPeerBlocks(const qint64 now)
++{
++    m_peerEndpointBlocklist->pruneExpired(now);
++}
++
++void NativeSessionExtension::setPeerObserver(BitTorrent::PeerBander::PeerObserver observer)
++{
++    m_peerObserver = std::move(observer);
++}
++
+ void NativeSessionExtension::setBannedPeerEndpoints(const QStringList &endpoints)
+ {
+     m_peerEndpointBlocklist->replace(endpoints);
+@@ -71,7 +91,7 @@ lt::feature_flags_t NativeSessionExtension::implemented_features()
+ std::shared_ptr<lt::torrent_plugin> NativeSessionExtension::new_torrent(const lt::torrent_handle &torrentHandle, LTClientData clientData)
+ {
+     return std::make_shared<NativeTorrentExtension>(torrentHandle, static_cast<ExtensionData *>(clientData)
+-        , m_peerEndpointBlocklist);
++        , m_peerEndpointBlocklist, m_peerObserver);
+ }
+ 
+ void NativeSessionExtension::on_alert(const lt::alert *alert)
+diff --git a/src/base/bittorrent/nativesessionextension.h b/src/base/bittorrent/nativesessionextension.h
+index 093f651..bc5fafd 100644
+--- a/src/base/bittorrent/nativesessionextension.h
++++ b/src/base/bittorrent/nativesessionextension.h
+@@ -35,6 +35,7 @@
+ #include <QReadWriteLock>
+ 
+ #include "extensiondata.h"
++#include "peerbandertypes.h"
+ #include "peerendpointblocklist.h"
+ 
+ class NativeSessionExtension final : public lt::plugin
+@@ -42,6 +43,10 @@ class NativeSessionExtension final : public lt::plugin
+ public:
+     bool isSessionListening() const;
+     void banPeerEndpoint(const BitTorrent::PeerAddress &endpoint);
++    void blockPeerEndpointTemporarily(const BitTorrent::PeerAddress &endpoint, qint64 expiresAt);
++    void blockPeerIPTemporarily(const QHostAddress &ip, qint64 expiresAt);
++    void pruneTemporaryPeerBlocks(qint64 now);
++    void setPeerObserver(BitTorrent::PeerBander::PeerObserver observer);
+     void setBannedPeerEndpoints(const QStringList &endpoints);
+ 
+ private:
+@@ -56,6 +61,7 @@ private:
+ 
+     mutable QReadWriteLock m_lock;
+     bool m_isSessionListening = false;
++    BitTorrent::PeerBander::PeerObserver m_peerObserver;
+     std::shared_ptr<BitTorrent::PeerEndpointBlocklist> m_peerEndpointBlocklist
+         = std::make_shared<BitTorrent::PeerEndpointBlocklist>();
+ };
+diff --git a/src/base/bittorrent/nativetorrentextension.cpp b/src/base/bittorrent/nativetorrentextension.cpp
+index 9f35688..616192d 100644
+--- a/src/base/bittorrent/nativetorrentextension.cpp
++++ b/src/base/bittorrent/nativetorrentextension.cpp
+@@ -28,16 +28,19 @@
+ 
+ #include "nativetorrentextension.h"
+ 
++#include <stdexcept>
+ #include <utility>
+ 
+-#include <libtorrent/error_code.hpp>
+-#include <libtorrent/operations.hpp>
++#include <libtorrent/bdecode.hpp>
+ #include <libtorrent/peer_connection_handle.hpp>
+ #include <libtorrent/torrent_status.hpp>
+ 
+ #include <QHostAddress>
+ #include <QString>
+ 
++#include "base/global.h"
++#include "infohash.h"
++#include "peerbandertypes.h"
+ #include "peerendpointblocklist.h"
+ 
+ namespace
+@@ -50,44 +53,88 @@ namespace
+         };
+     }
+ 
++    QString peerIdClient(const lt::peer_id &peerId)
++    {
++        if (peerId.is_all_zeros())
++            return {};
++
++        QString result;
++        for (int i = 0; i < 8; ++i)
++        {
++            const std::uint8_t c = peerId[i];
++            if ((c < 32) || (c > 126))
++                return u"Unknown"_s;
++            result += QChar::fromLatin1(c);
++        }
++        return result;
++    }
++
++    QString sanitizeClient(const lt::string_view value)
++    {
++        const QString decoded = QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())).simplified();
++        QString result;
++        result.reserve(decoded.size());
++        for (const QChar c : decoded)
++        {
++            if (c.isPrint())
++                result += c;
++        }
++        return result;
++    }
++
+     class NativePeerExtension final : public lt::peer_plugin
+     {
+     public:
+-        NativePeerExtension(const lt::peer_connection_handle &connection
+-            , std::shared_ptr<BitTorrent::PeerEndpointBlocklist> peerEndpointBlocklist)
+-            : m_connection {connection}
++        NativePeerExtension(BitTorrent::PeerBander::PeerContext peer
++            , std::shared_ptr<BitTorrent::PeerEndpointBlocklist> peerEndpointBlocklist
++            , BitTorrent::PeerBander::PeerObserver peerObserver)
++            : m_peer {std::move(peer)}
+             , m_peerEndpointBlocklist {std::move(peerEndpointBlocklist)}
++            , m_peerObserver {std::move(peerObserver)}
+         {
+-            disconnectIfBanned();
+         }
+ 
+     private:
+-        void tick() override
++        bool on_handshake(const lt::span<char const>) override
+         {
+-            disconnectIfBanned();
++            notifyObserver();
++            return true;
+         }
+ 
+-        void disconnectIfBanned()
++        bool on_extension_handshake(const lt::bdecode_node &handshake) override
+         {
+-            if (m_connection.is_disconnecting())
+-                return;
++            const lt::string_view client = handshake.dict_find_string_value("v");
++            if (!client.empty())
++                m_peer.client = sanitizeClient(client);
++            notifyObserver();
++            return true;
++        }
+ 
+-            if (m_peerEndpointBlocklist->contains(fromNativeEndpoint(m_connection.remote())))
+-            {
+-                m_connection.disconnect(lt::errors::peer_banned, lt::operation_t::bittorrent);
+-            }
++        void tick() override
++        {
++            if (m_peerEndpointBlocklist->contains(m_peer.endpoint))
++                throw std::runtime_error {"Peer is blocked by qBittorrent Precision PeerGuard"};
+         }
+ 
+-        lt::peer_connection_handle m_connection;
++        void notifyObserver() const
++        {
++            if (m_peerObserver)
++                m_peerObserver(m_peer);
++        }
++
++        BitTorrent::PeerBander::PeerContext m_peer;
+         std::shared_ptr<BitTorrent::PeerEndpointBlocklist> m_peerEndpointBlocklist;
++        BitTorrent::PeerBander::PeerObserver m_peerObserver;
+     };
+ }
+ 
+ NativeTorrentExtension::NativeTorrentExtension(const lt::torrent_handle &torrentHandle, ExtensionData *data
+-    , std::shared_ptr<BitTorrent::PeerEndpointBlocklist> peerEndpointBlocklist)
++    , std::shared_ptr<BitTorrent::PeerEndpointBlocklist> peerEndpointBlocklist
++    , BitTorrent::PeerBander::PeerObserver peerObserver)
+     : m_torrentHandle {torrentHandle}
+     , m_data {data}
+     , m_peerEndpointBlocklist {std::move(peerEndpointBlocklist)}
++    , m_peerObserver {std::move(peerObserver)}
+ {
+     // NOTE: `data` may not exist if a torrent is added behind the scenes to download metadata
+ 
+@@ -96,14 +143,32 @@ NativeTorrentExtension::NativeTorrentExtension(const lt::torrent_handle &torrent
+         m_data->status = m_torrentHandle.status();
+         m_data->trackers = m_torrentHandle.trackers();
+         m_data->urlSeeds = m_torrentHandle.url_seeds();
++        m_torrentName = QString::fromStdString(m_data->status.name);
+     }
+ 
++#ifdef QBT_USES_LIBTORRENT2
++    m_torrentHash = BitTorrent::InfoHash(m_torrentHandle.info_hashes()).toString();
++#else
++    m_torrentHash = BitTorrent::InfoHash(m_torrentHandle.info_hash()).toString();
++#endif
++
+     on_state(m_data ? m_data->status.state : m_torrentHandle.status({}).state);
+ }
+ 
+ std::shared_ptr<lt::peer_plugin> NativeTorrentExtension::new_connection(const lt::peer_connection_handle &connection)
+ {
+-    return std::make_shared<NativePeerExtension>(connection, m_peerEndpointBlocklist);
++    const BitTorrent::PeerAddress endpoint = fromNativeEndpoint(connection.remote());
++    if (m_peerEndpointBlocklist->contains(endpoint))
++        throw std::runtime_error {"Peer is blocked by qBittorrent Precision PeerGuard"};
++
++    BitTorrent::PeerBander::PeerContext peer
++    {
++        .endpoint = endpoint,
++        .peerId = peerIdClient(connection.pid()),
++        .torrentHash = m_torrentHash,
++        .torrentName = m_torrentName
++    };
++    return std::make_shared<NativePeerExtension>(std::move(peer), m_peerEndpointBlocklist, m_peerObserver);
+ }
+ 
+ NativeTorrentExtension::~NativeTorrentExtension()
+diff --git a/src/base/bittorrent/nativetorrentextension.h b/src/base/bittorrent/nativetorrentextension.h
+index 4d7107d..40a3813 100644
+--- a/src/base/bittorrent/nativetorrentextension.h
++++ b/src/base/bittorrent/nativetorrentextension.h
+@@ -34,6 +34,7 @@
+ #include <libtorrent/torrent_handle.hpp>
+ 
+ #include "extensiondata.h"
++#include "peerbandertypes.h"
+ 
+ namespace BitTorrent
+ {
+@@ -44,7 +45,8 @@ class NativeTorrentExtension final : public lt::torrent_plugin
+ {
+ public:
+     NativeTorrentExtension(const lt::torrent_handle &torrentHandle, ExtensionData *data
+-        , std::shared_ptr<BitTorrent::PeerEndpointBlocklist> peerEndpointBlocklist);
++        , std::shared_ptr<BitTorrent::PeerEndpointBlocklist> peerEndpointBlocklist
++        , BitTorrent::PeerBander::PeerObserver peerObserver);
+     ~NativeTorrentExtension();
+ 
+ private:
+@@ -55,4 +57,7 @@ private:
+     lt::torrent_status::state_t m_state = lt::torrent_status::checking_resume_data;
+     ExtensionData *m_data = nullptr;
+     std::shared_ptr<BitTorrent::PeerEndpointBlocklist> m_peerEndpointBlocklist;
++    BitTorrent::PeerBander::PeerObserver m_peerObserver;
++    QString m_torrentHash;
++    QString m_torrentName;
+ };
+diff --git a/src/base/bittorrent/peerbandermanager.cpp b/src/base/bittorrent/peerbandermanager.cpp
+new file mode 100644
+index 0000000..19562f3
+--- /dev/null
++++ b/src/base/bittorrent/peerbandermanager.cpp
+@@ -0,0 +1,217 @@
++/*
++ * qBittorrent Precision PeerBander
++ * Copyright (C) 2026 qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#include "peerbandermanager.h"
++
++#include <algorithm>
++#include <chrono>
++
++#include <QTimer>
++
++#include "base/path.h"
++#include "base/profile.h"
++#include "session.h"
++
++using namespace std::chrono_literals;
++using namespace BitTorrent;
++using namespace BitTorrent::PeerBander;
++
++Manager::Manager(Session *session, QObject *parent)
++    : QObject(parent)
++    , m_session {session}
++    , m_store {(specialFolderLocation(SpecialFolder::Data) / Path(u"peerguard.sqlite"_s)).data()}
++    , m_maintenanceTimer {new QTimer(this)}
++{
++    reloadRules();
++    m_runtimeEnabled.store(m_store.isEnabled(), std::memory_order_release);
++    m_maintenanceTimer->setInterval(10min);
++    connect(m_maintenanceTimer, &QTimer::timeout, this, &Manager::maintenance);
++    m_maintenanceTimer->start();
++}
++
++bool Manager::isAvailable() const
++{
++    return m_store.isAvailable();
++}
++
++QString Manager::lastError() const
++{
++    return m_store.lastError();
++}
++
++bool Manager::isEnabled() const
++{
++    return isRuntimeEnabled();
++}
++
++bool Manager::isRuntimeEnabled() const noexcept
++{
++    return m_runtimeEnabled.load(std::memory_order_acquire);
++}
++
++bool Manager::setEnabled(const bool enabled)
++{
++    if (!m_store.setEnabled(enabled))
++        return false;
++
++    m_runtimeEnabled.store(enabled, std::memory_order_release);
++    if (!enabled)
++    {
++        m_currentPeers.clear();
++        m_recentEvents.clear();
++    }
++    return true;
++}
++
++bool Manager::isScanInProgress() const
++{
++    return false;
++}
++
++QDateTime Manager::lastScanTime() const
++{
++    return m_lastScanTime;
++}
++
++QList<Rule> Manager::rules() const
++{
++    return m_engine.rules();
++}
++
++qint64 Manager::saveRule(const Rule &rule)
++{
++    const qint64 id = m_store.saveRule(rule);
++    if (id > 0)
++        reloadRules();
++    return id;
++}
++
++bool Manager::deleteRule(const qint64 id)
++{
++    if (!m_store.deleteRule(id))
++        return false;
++    reloadRules();
++    return true;
++}
++
++Decision Manager::evaluate(const PeerContext &peer) const
++{
++    PeerContext normalized = peer;
++    const ClientIdentity identity = identifyClient(peer.client, peer.peerId);
++    if (normalized.clientFamily.isEmpty())
++        normalized.clientFamily = identity.family;
++    if (normalized.clientVersion.isEmpty())
++        normalized.clientVersion = identity.version;
++    return m_engine.evaluate(normalized);
++}
++
++QList<PeerContext> Manager::currentPeers() const
++{
++    return m_currentPeers;
++}
++
++QList<Event> Manager::events(const int limit) const
++{
++    return m_store.loadEvents(limit);
++}
++
++int Manager::eventCount() const
++{
++    return m_store.eventCount();
++}
++
++bool Manager::clearEvents()
++{
++    return m_store.clearEvents();
++}
++
++void Manager::scanNow()
++{
++    // Kept as a compatibility no-op for the alpha Web API. PeerGuard is
++    // deliberately event-driven and never starts an all-torrent peer scan.
++}
++
++void Manager::reloadRules()
++{
++    m_engine.setRules(m_store.loadRules());
++}
++
++void Manager::observePeer(PeerContext peer)
++{
++    if (!isRuntimeEnabled() || peer.endpoint.ip.isNull() || (peer.endpoint.port == 0))
++        return;
++
++    const ClientIdentity identity = identifyClient(peer.client, peer.peerId);
++    peer.clientFamily = identity.family;
++    peer.clientVersion = identity.version;
++
++    const QString peerKey = u"%1|%2"_s.arg(peer.torrentHash, peer.endpoint.toString());
++    auto existingPeer = std::find_if(m_currentPeers.begin(), m_currentPeers.end(), [&peerKey](const PeerContext &item)
++    {
++        return u"%1|%2"_s.arg(item.torrentHash, item.endpoint.toString()) == peerKey;
++    });
++    if (existingPeer != m_currentPeers.end())
++        *existingPeer = peer;
++    else
++        m_currentPeers.append(peer);
++    while (m_currentPeers.size() > 500)
++        m_currentPeers.removeFirst();
++
++    const Decision decision = m_engine.evaluate(peer);
++    m_lastScanTime = QDateTime::currentDateTimeUtc();
++    if (!decision.matched)
++        return;
++
++    constexpr qint64 BLOCK_DURATION_SECONDS = 7 * 24 * 60 * 60;
++    const qint64 expiresAt = m_lastScanTime.addSecs(BLOCK_DURATION_SECONDS).toMSecsSinceEpoch();
++    bool enforced = false;
++    if (decision.action == Action::BlockEndpoint)
++    {
++        m_session->blockPeerEndpointTemporarily(peer.endpoint, expiresAt);
++        enforced = true;
++    }
++    else if (decision.action == Action::BlockIP)
++    {
++        m_session->blockPeerIPTemporarily(peer.endpoint.ip, expiresAt);
++        enforced = true;
++    }
++
++    const QString decisionKey = u"%1|%2|%3|%4"_s
++        .arg(peer.torrentHash, peer.endpoint.toString())
++        .arg(decision.ruleId)
++        .arg(actionToString(decision.action));
++    constexpr qint64 EVENT_COOLDOWN_MSECS = 10 * 60 * 1000;
++    const QDateTime previousEvent = m_recentEvents.value(decisionKey);
++    if (!previousEvent.isValid() || (previousEvent.msecsTo(m_lastScanTime) >= EVENT_COOLDOWN_MSECS))
++    {
++        m_store.addEvent(
++        {
++            .timestamp = m_lastScanTime,
++            .peer = peer,
++            .decision = decision,
++            .enforced = enforced
++        });
++        m_recentEvents.insert(decisionKey, m_lastScanTime);
++    }
++}
++
++void Manager::maintenance()
++{
++    const QDateTime now = QDateTime::currentDateTimeUtc();
++    m_session->pruneTemporaryPeerBlocks(now.toMSecsSinceEpoch());
++
++    for (auto it = m_recentEvents.begin(); it != m_recentEvents.end();)
++    {
++        if (it.value().msecsTo(now) >= (10 * 60 * 1000))
++            it = m_recentEvents.erase(it);
++        else
++            ++it;
++    }
++}
+diff --git a/src/base/bittorrent/peerbandermanager.h b/src/base/bittorrent/peerbandermanager.h
+new file mode 100644
+index 0000000..cbce365
+--- /dev/null
++++ b/src/base/bittorrent/peerbandermanager.h
+@@ -0,0 +1,72 @@
++/*
++ * qBittorrent Precision PeerBander
++ * Copyright (C) 2026 qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#pragma once
++
++#include <atomic>
++
++#include <QHash>
++#include <QList>
++#include <QObject>
++
++#include "peerbanderruleengine.h"
++#include "peerbanderstore.h"
++
++class QTimer;
++
++namespace BitTorrent { class Session; }
++
++namespace BitTorrent::PeerBander
++{
++    class Manager final : public QObject
++    {
++        Q_OBJECT
++        Q_DISABLE_COPY_MOVE(Manager)
++
++    public:
++        explicit Manager(Session *session, QObject *parent = nullptr);
++
++        bool isAvailable() const;
++        QString lastError() const;
++        bool isEnabled() const;
++        bool isRuntimeEnabled() const noexcept;
++        bool setEnabled(bool enabled);
++        bool isScanInProgress() const;
++        QDateTime lastScanTime() const;
++
++        QList<Rule> rules() const;
++        qint64 saveRule(const Rule &rule);
++        bool deleteRule(qint64 id);
++        Decision evaluate(const PeerContext &peer) const;
++
++        QList<PeerContext> currentPeers() const;
++        QList<Event> events(int limit) const;
++        int eventCount() const;
++        bool clearEvents();
++
++        void observePeer(PeerContext peer);
++
++    public slots:
++        void scanNow();
++
++    private:
++        void reloadRules();
++        void maintenance();
++
++        Session *const m_session;
++        Store m_store;
++        RuleEngine m_engine;
++        QTimer *const m_maintenanceTimer;
++        std::atomic_bool m_runtimeEnabled = false;
++        QDateTime m_lastScanTime;
++        QList<PeerContext> m_currentPeers;
++        QHash<QString, QDateTime> m_recentEvents;
++    };
++}
+diff --git a/src/base/bittorrent/peerbanderruleengine.cpp b/src/base/bittorrent/peerbanderruleengine.cpp
+new file mode 100644
+index 0000000..caee0ba
+--- /dev/null
++++ b/src/base/bittorrent/peerbanderruleengine.cpp
+@@ -0,0 +1,82 @@
++/*
++ * qBittorrent Precision PeerBander
++ * Copyright (C) 2026 qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#include "peerbanderruleengine.h"
++
++#include <algorithm>
++
++#include <QRegularExpression>
++
++#include "base/global.h"
++
++using namespace BitTorrent::PeerBander;
++
++void RuleEngine::setRules(QList<Rule> rules)
++{
++    std::stable_sort(rules.begin(), rules.end(), [](const Rule &left, const Rule &right)
++    {
++        if (left.priority != right.priority)
++            return left.priority > right.priority;
++        return left.id < right.id;
++    });
++    m_rules = std::move(rules);
++}
++
++const QList<Rule> &RuleEngine::rules() const
++{
++    return m_rules;
++}
++
++Decision RuleEngine::evaluate(const PeerContext &peer) const
++{
++    for (const Rule &rule : m_rules)
++    {
++        if (!rule.enabled || !matches(rule, peer))
++            continue;
++
++        return
++        {
++            .action = rule.action,
++            .ruleId = rule.id,
++            .reason = u"Matched rule %1 (%2)"_s.arg(rule.id).arg(rule.comment),
++            .matched = true
++        };
++    }
++
++    return
++    {
++        .action = Action::Observe,
++        .reason = u"No rule matched"_s,
++        .matched = false
++    };
++}
++
++bool RuleEngine::matches(const Rule &rule, const PeerContext &peer)
++{
++    return wildcardMatch(rule.clientFamily, peer.clientFamily)
++        && wildcardMatch(rule.clientVersion, peer.clientVersion)
++        && wildcardMatch(rule.peerIdPattern, peer.peerId)
++        && wildcardMatch(rule.ipPattern, peer.endpoint.ip.toString())
++        && ((rule.port == 0) || (rule.port == peer.endpoint.port))
++        && wildcardMatch(rule.torrentHashPattern, peer.torrentHash);
++}
++
++bool RuleEngine::wildcardMatch(const QStringView pattern, const QStringView value)
++{
++    if (pattern.isEmpty() || (pattern == u"*"))
++        return true;
++
++    const QRegularExpression expression
++    {
++        QRegularExpression::wildcardToRegularExpression(pattern.toString()),
++        QRegularExpression::CaseInsensitiveOption
++    };
++    return expression.match(value).hasMatch();
++}
+diff --git a/src/base/bittorrent/peerbanderruleengine.h b/src/base/bittorrent/peerbanderruleengine.h
+new file mode 100644
+index 0000000..ebe0bb0
+--- /dev/null
++++ b/src/base/bittorrent/peerbanderruleengine.h
+@@ -0,0 +1,32 @@
++/*
++ * qBittorrent Precision PeerBander
++ * Copyright (C) 2026 qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#pragma once
++
++#include <QList>
++
++#include "peerbandertypes.h"
++
++namespace BitTorrent::PeerBander
++{
++    class RuleEngine
++    {
++    public:
++        void setRules(QList<Rule> rules);
++        const QList<Rule> &rules() const;
++        Decision evaluate(const PeerContext &peer) const;
++
++    private:
++        static bool matches(const Rule &rule, const PeerContext &peer);
++        static bool wildcardMatch(QStringView pattern, QStringView value);
++
++        QList<Rule> m_rules;
++    };
++}
+diff --git a/src/base/bittorrent/peerbanderstore.cpp b/src/base/bittorrent/peerbanderstore.cpp
+new file mode 100644
+index 0000000..e577453
+--- /dev/null
++++ b/src/base/bittorrent/peerbanderstore.cpp
+@@ -0,0 +1,374 @@
++/*
++ * qBittorrent Precision PeerBander
++ * Copyright (C) 2026 qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#include "peerbanderstore.h"
++
++#include <algorithm>
++
++#include <QSqlError>
++#include <QSqlQuery>
++#include <QVariant>
++
++#include "base/global.h"
++
++using namespace BitTorrent::PeerBander;
++
++namespace
++{
++    constexpr int MAX_STORED_EVENTS = 5000;
++
++    Rule readRule(const QSqlQuery &query)
++    {
++        return
++        {
++            .id = query.value(u"id"_s).toLongLong(),
++            .enabled = query.value(u"enabled"_s).toBool(),
++            .priority = query.value(u"priority"_s).toInt(),
++            .clientFamily = query.value(u"client_family"_s).toString(),
++            .clientVersion = query.value(u"client_version"_s).toString(),
++            .peerIdPattern = query.value(u"peer_id_pattern"_s).toString(),
++            .ipPattern = query.value(u"ip_pattern"_s).toString(),
++            .port = static_cast<ushort>(query.value(u"port"_s).toUInt()),
++            .torrentHashPattern = query.value(u"torrent_hash_pattern"_s).toString(),
++            .action = actionFromString(query.value(u"action"_s).toString()).value_or(Action::Observe),
++            .comment = query.value(u"comment"_s).toString()
++        };
++    }
++
++    void bindRule(QSqlQuery &query, const Rule &rule)
++    {
++        query.bindValue(u":enabled"_s, rule.enabled);
++        query.bindValue(u":priority"_s, rule.priority);
++        query.bindValue(u":client_family"_s, rule.clientFamily.isEmpty() ? u"*"_s : rule.clientFamily);
++        query.bindValue(u":client_version"_s, rule.clientVersion.isEmpty() ? u"*"_s : rule.clientVersion);
++        query.bindValue(u":peer_id_pattern"_s, rule.peerIdPattern.isEmpty() ? u"*"_s : rule.peerIdPattern);
++        query.bindValue(u":ip_pattern"_s, rule.ipPattern.isEmpty() ? u"*"_s : rule.ipPattern);
++        query.bindValue(u":port"_s, rule.port);
++        query.bindValue(u":torrent_hash_pattern"_s, rule.torrentHashPattern.isEmpty() ? u"*"_s : rule.torrentHashPattern);
++        query.bindValue(u":action"_s, actionToString(rule.action));
++        query.bindValue(u":comment"_s, rule.comment);
++    }
++}
++
++Store::Store(const QString &databasePath)
++    : m_connectionName {u"PeerBander_%1"_s.arg(reinterpret_cast<quintptr>(this))}
++    , m_database {QSqlDatabase::addDatabase(u"QSQLITE"_s, m_connectionName)}
++{
++    m_database.setDatabaseName(databasePath);
++    if (!m_database.open())
++    {
++        setError(m_database.lastError().text());
++        return;
++    }
++
++    m_available = initialize();
++}
++
++Store::~Store()
++{
++    if (m_database.isOpen())
++        m_database.close();
++    m_database = {};
++    QSqlDatabase::removeDatabase(m_connectionName);
++}
++
++bool Store::isAvailable() const
++{
++    return m_available;
++}
++
++QString Store::lastError() const
++{
++    return m_lastError;
++}
++
++bool Store::initialize()
++{
++    QSqlQuery query {m_database};
++    const QStringList statements
++    {
++        u"CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);"_s,
++        u"CREATE TABLE IF NOT EXISTS rules ("
++            "id INTEGER PRIMARY KEY AUTOINCREMENT, enabled INTEGER NOT NULL, priority INTEGER NOT NULL, "
++            "client_family TEXT NOT NULL, client_version TEXT NOT NULL, peer_id_pattern TEXT NOT NULL, "
++            "ip_pattern TEXT NOT NULL, port INTEGER NOT NULL, torrent_hash_pattern TEXT NOT NULL, "
++            "action TEXT NOT NULL, comment TEXT NOT NULL);"_s,
++        u"CREATE TABLE IF NOT EXISTS events ("
++            "id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL, endpoint TEXT NOT NULL, "
++            "client TEXT NOT NULL, client_family TEXT NOT NULL, client_version TEXT NOT NULL, "
++            "peer_id TEXT NOT NULL, torrent_hash TEXT NOT NULL, torrent_name TEXT NOT NULL, "
++            "rule_id INTEGER NOT NULL, action TEXT NOT NULL, reason TEXT NOT NULL, enforced INTEGER NOT NULL);"_s,
++        u"CREATE INDEX IF NOT EXISTS events_timestamp_idx ON events(timestamp DESC);"_s,
++        u"INSERT OR IGNORE INTO settings(key, value) VALUES('enabled', '0');"_s
++    };
++
++    for (const QString &statement : statements)
++    {
++        if (!query.exec(statement))
++        {
++            setError(query.lastError().text());
++            return false;
++        }
++    }
++
++    return seedDefaultRules();
++}
++
++bool Store::seedDefaultRules()
++{
++    QSqlQuery countQuery {m_database};
++    if (!countQuery.exec(u"SELECT COUNT(*) FROM rules;"_s) || !countQuery.next())
++    {
++        setError(countQuery.lastError().text());
++        return false;
++    }
++    if (countQuery.value(0).toInt() > 0)
++        return true;
++
++    const QList<Rule> defaults
++    {
++        {.priority = 100, .clientFamily = u"Xunlei", .clientVersion = u"0.0.1.9", .action = Action::Allow,
++            .comment = u"Allow configured Xunlei version 0.0.1.9"_s},
++        {.priority = 100, .clientFamily = u"Xunlei", .clientVersion = u"0.0.1.8", .action = Action::Allow,
++            .comment = u"Allow configured Xunlei version 0.0.1.8"_s},
++        {.priority = 50, .clientFamily = u"Gopeed*", .clientVersion = u"*", .action = Action::BlockIP,
++            .comment = u"Block confirmed Gopeed leecher family by IP"_s},
++        {.priority = 10, .clientFamily = u"Xunlei", .clientVersion = u"*", .action = Action::BlockEndpoint,
++            .comment = u"Block other Xunlei versions by exact endpoint"_s}
++    };
++
++    if (!m_database.transaction())
++    {
++        setError(m_database.lastError().text());
++        return false;
++    }
++
++    for (const Rule &rule : defaults)
++    {
++        if (saveRule(rule) <= 0)
++        {
++            m_database.rollback();
++            return false;
++        }
++    }
++
++    if (!m_database.commit())
++    {
++        setError(m_database.lastError().text());
++        return false;
++    }
++    return true;
++}
++
++bool Store::isEnabled() const
++{
++    if (!m_available)
++        return false;
++
++    QSqlQuery query {m_database};
++    query.prepare(u"SELECT value FROM settings WHERE key = 'enabled';"_s);
++    if (!query.exec() || !query.next())
++    {
++        setError(query.lastError().text());
++        return false;
++    }
++    return query.value(0).toInt() != 0;
++}
++
++bool Store::setEnabled(const bool enabled)
++{
++    if (!m_available)
++        return false;
++
++    QSqlQuery query {m_database};
++    query.prepare(u"INSERT OR REPLACE INTO settings(key, value) VALUES('enabled', :value);"_s);
++    query.bindValue(u":value"_s, enabled ? u"1"_s : u"0"_s);
++    if (!query.exec())
++    {
++        setError(query.lastError().text());
++        return false;
++    }
++    return true;
++}
++
++QList<Rule> Store::loadRules() const
++{
++    QList<Rule> rules;
++    if (!m_available)
++        return rules;
++
++    QSqlQuery query {m_database};
++    if (!query.exec(u"SELECT * FROM rules ORDER BY priority DESC, id ASC;"_s))
++    {
++        setError(query.lastError().text());
++        return rules;
++    }
++    while (query.next())
++        rules.append(readRule(query));
++    return rules;
++}
++
++qint64 Store::saveRule(const Rule &rule)
++{
++    if (!m_database.isOpen())
++        return 0;
++
++    QSqlQuery query {m_database};
++    if (rule.id > 0)
++    {
++        query.prepare(u"UPDATE rules SET enabled=:enabled, priority=:priority, client_family=:client_family, "
++            "client_version=:client_version, peer_id_pattern=:peer_id_pattern, ip_pattern=:ip_pattern, "
++            "port=:port, torrent_hash_pattern=:torrent_hash_pattern, action=:action, comment=:comment WHERE id=:id;"_s);
++        query.bindValue(u":id"_s, rule.id);
++    }
++    else
++    {
++        query.prepare(u"INSERT INTO rules(enabled, priority, client_family, client_version, peer_id_pattern, "
++            "ip_pattern, port, torrent_hash_pattern, action, comment) VALUES(:enabled, :priority, :client_family, "
++            ":client_version, :peer_id_pattern, :ip_pattern, :port, :torrent_hash_pattern, :action, :comment);"_s);
++    }
++    bindRule(query, rule);
++
++    if (!query.exec())
++    {
++        setError(query.lastError().text());
++        return 0;
++    }
++    return (rule.id > 0) ? rule.id : query.lastInsertId().toLongLong();
++}
++
++bool Store::deleteRule(const qint64 id)
++{
++    if (!m_available)
++        return false;
++
++    QSqlQuery query {m_database};
++    query.prepare(u"DELETE FROM rules WHERE id=:id;"_s);
++    query.bindValue(u":id"_s, id);
++    if (!query.exec())
++    {
++        setError(query.lastError().text());
++        return false;
++    }
++    return query.numRowsAffected() > 0;
++}
++
++bool Store::addEvent(const Event &event)
++{
++    if (!m_available)
++        return false;
++
++    QSqlQuery query {m_database};
++    query.prepare(u"INSERT INTO events(timestamp, endpoint, client, client_family, client_version, peer_id, "
++        "torrent_hash, torrent_name, rule_id, action, reason, enforced) VALUES(:timestamp, :endpoint, :client, "
++        ":client_family, :client_version, :peer_id, :torrent_hash, :torrent_name, :rule_id, :action, :reason, :enforced);"_s);
++    query.bindValue(u":timestamp"_s, event.timestamp.toMSecsSinceEpoch());
++    query.bindValue(u":endpoint"_s, event.peer.endpoint.toString());
++    query.bindValue(u":client"_s, event.peer.client);
++    query.bindValue(u":client_family"_s, event.peer.clientFamily);
++    query.bindValue(u":client_version"_s, event.peer.clientVersion);
++    query.bindValue(u":peer_id"_s, event.peer.peerId);
++    query.bindValue(u":torrent_hash"_s, event.peer.torrentHash);
++    query.bindValue(u":torrent_name"_s, event.peer.torrentName);
++    query.bindValue(u":rule_id"_s, event.decision.ruleId);
++    query.bindValue(u":action"_s, actionToString(event.decision.action));
++    query.bindValue(u":reason"_s, event.decision.reason);
++    query.bindValue(u":enforced"_s, event.enforced);
++    if (!query.exec())
++    {
++        setError(query.lastError().text());
++        return false;
++    }
++
++    QSqlQuery trimQuery {m_database};
++    trimQuery.prepare(u"DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT :limit);"_s);
++    trimQuery.bindValue(u":limit"_s, MAX_STORED_EVENTS);
++    if (!trimQuery.exec())
++        setError(trimQuery.lastError().text());
++    return true;
++}
++
++QList<Event> Store::loadEvents(const int limit) const
++{
++    QList<Event> events;
++    if (!m_available)
++        return events;
++
++    QSqlQuery query {m_database};
++    query.prepare(u"SELECT * FROM events ORDER BY id DESC LIMIT :limit;"_s);
++    query.bindValue(u":limit"_s, std::clamp(limit, 1, 1000));
++    if (!query.exec())
++    {
++        setError(query.lastError().text());
++        return events;
++    }
++
++    while (query.next())
++    {
++        const PeerAddress endpoint = PeerAddress::parse(query.value(u"endpoint"_s).toString());
++        events.append(
++        {
++            .id = query.value(u"id"_s).toLongLong(),
++            .timestamp = QDateTime::fromMSecsSinceEpoch(query.value(u"timestamp"_s).toLongLong()),
++            .peer =
++            {
++                .endpoint = endpoint,
++                .client = query.value(u"client"_s).toString(),
++                .clientFamily = query.value(u"client_family"_s).toString(),
++                .clientVersion = query.value(u"client_version"_s).toString(),
++                .peerId = query.value(u"peer_id"_s).toString(),
++                .torrentHash = query.value(u"torrent_hash"_s).toString(),
++                .torrentName = query.value(u"torrent_name"_s).toString()
++            },
++            .decision =
++            {
++                .action = actionFromString(query.value(u"action"_s).toString()).value_or(Action::Observe),
++                .ruleId = query.value(u"rule_id"_s).toLongLong(),
++                .reason = query.value(u"reason"_s).toString(),
++                .matched = true
++            },
++            .enforced = query.value(u"enforced"_s).toBool()
++        });
++    }
++    return events;
++}
++
++int Store::eventCount() const
++{
++    if (!m_available)
++        return 0;
++
++    QSqlQuery query {m_database};
++    if (!query.exec(u"SELECT COUNT(*) FROM events;"_s) || !query.next())
++    {
++        setError(query.lastError().text());
++        return 0;
++    }
++    return query.value(0).toInt();
++}
++
++bool Store::clearEvents()
++{
++    if (!m_available)
++        return false;
++
++    QSqlQuery query {m_database};
++    if (!query.exec(u"DELETE FROM events;"_s))
++    {
++        setError(query.lastError().text());
++        return false;
++    }
++    return true;
++}
++
++void Store::setError(const QString &error) const
++{
++    m_lastError = error;
++}
+diff --git a/src/base/bittorrent/peerbanderstore.h b/src/base/bittorrent/peerbanderstore.h
+new file mode 100644
+index 0000000..4569617
+--- /dev/null
++++ b/src/base/bittorrent/peerbanderstore.h
+@@ -0,0 +1,52 @@
++/*
++ * qBittorrent Precision PeerBander
++ * Copyright (C) 2026 qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#pragma once
++
++#include <QList>
++#include <QSqlDatabase>
++#include <QString>
++
++#include "peerbandertypes.h"
++
++namespace BitTorrent::PeerBander
++{
++    class Store
++    {
++    public:
++        explicit Store(const QString &databasePath);
++        ~Store();
++
++        bool isAvailable() const;
++        QString lastError() const;
++
++        bool isEnabled() const;
++        bool setEnabled(bool enabled);
++
++        QList<Rule> loadRules() const;
++        qint64 saveRule(const Rule &rule);
++        bool deleteRule(qint64 id);
++
++        bool addEvent(const Event &event);
++        QList<Event> loadEvents(int limit) const;
++        int eventCount() const;
++        bool clearEvents();
++
++    private:
++        bool initialize();
++        bool seedDefaultRules();
++        void setError(const QString &error) const;
++
++        const QString m_connectionName;
++        QSqlDatabase m_database;
++        mutable QString m_lastError;
++        bool m_available = false;
++    };
++}
+diff --git a/src/base/bittorrent/peerbandertypes.cpp b/src/base/bittorrent/peerbandertypes.cpp
+new file mode 100644
+index 0000000..b709380
+--- /dev/null
++++ b/src/base/bittorrent/peerbandertypes.cpp
+@@ -0,0 +1,117 @@
++/*
++ * qBittorrent Precision PeerBander
++ * Copyright (C) 2026 qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#include "peerbandertypes.h"
++
++#include <QRegularExpression>
++
++#include "base/global.h"
++
++using namespace BitTorrent::PeerBander;
++
++QString BitTorrent::PeerBander::actionToString(const Action action)
++{
++    switch (action)
++    {
++    case Action::Allow:
++        return u"allow"_s;
++    case Action::Observe:
++        return u"observe"_s;
++    case Action::BlockEndpoint:
++        return u"block_endpoint"_s;
++    case Action::BlockIP:
++        return u"block_ip"_s;
++    }
++
++    return u"observe"_s;
++}
++
++std::optional<Action> BitTorrent::PeerBander::actionFromString(const QStringView value)
++{
++    if (value.compare(u"allow", Qt::CaseInsensitive) == 0)
++        return Action::Allow;
++    if (value.compare(u"observe", Qt::CaseInsensitive) == 0)
++        return Action::Observe;
++    // "block" was used by the unpublished prototype. Keep it as a safe
++    // endpoint-only alias when an early database is reused.
++    if ((value.compare(u"block", Qt::CaseInsensitive) == 0)
++        || (value.compare(u"block_endpoint", Qt::CaseInsensitive) == 0))
++    {
++        return Action::BlockEndpoint;
++    }
++    if (value.compare(u"block_ip", Qt::CaseInsensitive) == 0)
++        return Action::BlockIP;
++
++    return std::nullopt;
++}
++
++ClientIdentity BitTorrent::PeerBander::identifyClient(const QStringView client, const QStringView peerId)
++{
++    const QString normalized = client.toString().simplified();
++
++    static const QRegularExpression VERSION_PATTERN
++    {
++        u"(?:^|[^0-9])([0-9]+(?:\\.[0-9]+)+)(?=$|[^0-9])"_s
++    };
++
++    const QRegularExpressionMatch versionMatch = VERSION_PATTERN.match(normalized);
++    const QString version = versionMatch.hasMatch() ? versionMatch.captured(1) : QString();
++
++    const QString normalizedPeerId = peerId.toString().trimmed();
++    static const QRegularExpression XUNLEI_PEER_ID
++    {
++        u"^(?:-XL|-XU|-SD|-HP|-XM|-DT)|-RN0\\.0\\.0"_s,
++        QRegularExpression::CaseInsensitiveOption
++    };
++    const bool isXunleiPeerId = XUNLEI_PEER_ID.match(normalizedPeerId).hasMatch();
++    QString peerIdVersion;
++    if (isXunleiPeerId)
++    {
++        static const QRegularExpression XL_VERSION
++        {
++            u"^-XL([0-9]{4})"_s,
++            QRegularExpression::CaseInsensitiveOption
++        };
++        const QRegularExpressionMatch match = XL_VERSION.match(normalizedPeerId);
++        if (match.hasMatch())
++        {
++            const QString digits = match.captured(1);
++            peerIdVersion = u"%1.%2.%3.%4"_s
++                .arg(digits[0]).arg(digits[1]).arg(digits[2]).arg(digits[3]);
++        }
++    }
++
++    // libtorrent has emitted more than one display spelling for some clients.
++    // Normalize the known family without weakening the exact version match.
++    if (normalized.contains(u"xunlei", Qt::CaseInsensitive)
++        || normalized.contains(QString::fromUtf8("迅雷"), Qt::CaseInsensitive))
++    {
++        return {.family = u"Xunlei"_s, .version = version.isEmpty() ? peerIdVersion : version};
++    }
++
++    if (isXunleiPeerId)
++        return {.family = u"Xunlei"_s, .version = peerIdVersion};
++
++    if (normalized.isEmpty())
++        return {.family = u"Unknown"_s};
++
++    QString family = normalized;
++    if (versionMatch.hasMatch())
++    {
++        family = normalized.first(versionMatch.capturedStart()).trimmed();
++        while (!family.isEmpty() && QStringView(u"-_/vV ").contains(family.back()))
++            family.chop(1);
++    }
++
++    if (family.isEmpty())
++        family = normalized;
++
++    return {.family = family, .version = version};
++}
+diff --git a/src/base/bittorrent/peerbandertypes.h b/src/base/bittorrent/peerbandertypes.h
+new file mode 100644
+index 0000000..d64262e
+--- /dev/null
++++ b/src/base/bittorrent/peerbandertypes.h
+@@ -0,0 +1,89 @@
++/*
++ * qBittorrent Precision PeerBander
++ * Copyright (C) 2026 qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#pragma once
++
++#include <functional>
++#include <optional>
++
++#include <QDateTime>
++#include <QString>
++
++#include "peeraddress.h"
++
++namespace BitTorrent::PeerBander
++{
++    enum class Action
++    {
++        Allow,
++        Observe,
++        BlockEndpoint,
++        BlockIP
++    };
++
++    struct ClientIdentity
++    {
++        QString family;
++        QString version;
++    };
++
++    struct Rule
++    {
++        qint64 id = 0;
++        bool enabled = true;
++        int priority = 0;
++        QString clientFamily = u"*";
++        QString clientVersion = u"*";
++        QString peerIdPattern = u"*";
++        QString ipPattern = u"*";
++        ushort port = 0;
++        QString torrentHashPattern = u"*";
++        Action action = Action::Observe;
++        QString comment;
++    };
++
++    struct PeerContext
++    {
++        PeerAddress endpoint;
++        QString client;
++        QString clientFamily;
++        QString clientVersion;
++        QString peerId;
++        QString torrentHash;
++        QString torrentName;
++        qlonglong totalUpload = 0;
++        qlonglong totalDownload = 0;
++        int uploadSpeed = 0;
++        int downloadSpeed = 0;
++    };
++
++    struct Decision
++    {
++        Action action = Action::Observe;
++        qint64 ruleId = 0;
++        QString reason;
++        bool matched = false;
++    };
++
++    struct Event
++    {
++        qint64 id = 0;
++        QDateTime timestamp;
++        PeerContext peer;
++        Decision decision;
++        bool enforced = false;
++    };
++
++    QString actionToString(Action action);
++    std::optional<Action> actionFromString(QStringView value);
++    using PeerObserver = std::function<void (PeerContext)>;
++
++    ClientIdentity identifyClient(QStringView client, QStringView peerId = {});
++}
+diff --git a/src/base/bittorrent/peerendpointblocklist.cpp b/src/base/bittorrent/peerendpointblocklist.cpp
+index 38d7e69..d6862c6 100644
+--- a/src/base/bittorrent/peerendpointblocklist.cpp
++++ b/src/base/bittorrent/peerendpointblocklist.cpp
+@@ -10,16 +10,27 @@
+ 
+ #include "peerendpointblocklist.h"
+ 
++#include <algorithm>
+ #include <utility>
+ 
++#include <QDateTime>
+ #include <QStringList>
+ 
+ using namespace BitTorrent;
+ 
+ bool PeerEndpointBlocklist::contains(const PeerAddress &endpoint) const
+ {
++    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+     const QReadLocker locker {&m_lock};
+-    return m_endpoints.contains(endpoint);
++    if (m_endpoints.contains(endpoint))
++        return true;
++
++    const auto endpointIt = m_temporaryEndpoints.constFind(endpoint);
++    if ((endpointIt != m_temporaryEndpoints.cend()) && (endpointIt.value() > now))
++        return true;
++
++    const auto ipIt = m_temporaryIPs.constFind(endpoint.ip);
++    return (ipIt != m_temporaryIPs.cend()) && (ipIt.value() > now);
+ }
+ 
+ void PeerEndpointBlocklist::add(const PeerAddress &endpoint)
+@@ -31,6 +42,43 @@ void PeerEndpointBlocklist::add(const PeerAddress &endpoint)
+     m_endpoints.insert(endpoint);
+ }
+ 
++void PeerEndpointBlocklist::addTemporaryEndpoint(const PeerAddress &endpoint, const qint64 expiresAt)
++{
++    if (endpoint.ip.isNull() || (endpoint.port == 0) || (expiresAt <= QDateTime::currentMSecsSinceEpoch()))
++        return;
++
++    const QWriteLocker locker {&m_lock};
++    m_temporaryEndpoints[endpoint] = std::max(m_temporaryEndpoints.value(endpoint), expiresAt);
++}
++
++void PeerEndpointBlocklist::addTemporaryIP(const QHostAddress &ip, const qint64 expiresAt)
++{
++    if (ip.isNull() || (expiresAt <= QDateTime::currentMSecsSinceEpoch()))
++        return;
++
++    const QWriteLocker locker {&m_lock};
++    m_temporaryIPs[ip] = std::max(m_temporaryIPs.value(ip), expiresAt);
++}
++
++void PeerEndpointBlocklist::pruneExpired(const qint64 now)
++{
++    const QWriteLocker locker {&m_lock};
++    for (auto it = m_temporaryEndpoints.begin(); it != m_temporaryEndpoints.end();)
++    {
++        if (it.value() <= now)
++            it = m_temporaryEndpoints.erase(it);
++        else
++            ++it;
++    }
++    for (auto it = m_temporaryIPs.begin(); it != m_temporaryIPs.end();)
++    {
++        if (it.value() <= now)
++            it = m_temporaryIPs.erase(it);
++        else
++            ++it;
++    }
++}
++
+ void PeerEndpointBlocklist::replace(const QStringList &endpoints)
+ {
+     QSet<PeerAddress> parsedEndpoints;
+diff --git a/src/base/bittorrent/peerendpointblocklist.h b/src/base/bittorrent/peerendpointblocklist.h
+index 986704c..a9296ca 100644
+--- a/src/base/bittorrent/peerendpointblocklist.h
++++ b/src/base/bittorrent/peerendpointblocklist.h
+@@ -10,6 +10,7 @@
+ 
+ #pragma once
+ 
++#include <QHash>
+ #include <QReadWriteLock>
+ #include <QSet>
+ #include <QStringList>
+@@ -23,10 +24,15 @@ namespace BitTorrent
+     public:
+         bool contains(const PeerAddress &endpoint) const;
+         void add(const PeerAddress &endpoint);
++        void addTemporaryEndpoint(const PeerAddress &endpoint, qint64 expiresAt);
++        void addTemporaryIP(const QHostAddress &ip, qint64 expiresAt);
++        void pruneExpired(qint64 now);
+         void replace(const QStringList &endpoints);
+ 
+     private:
+         mutable QReadWriteLock m_lock;
+         QSet<PeerAddress> m_endpoints;
++        QHash<PeerAddress, qint64> m_temporaryEndpoints;
++        QHash<QHostAddress, qint64> m_temporaryIPs;
+     };
+ }
+diff --git a/src/base/bittorrent/session.h b/src/base/bittorrent/session.h
+index 026d0d0..297a905 100644
+--- a/src/base/bittorrent/session.h
++++ b/src/base/bittorrent/session.h
+@@ -42,10 +42,16 @@
+ #include "trackerentry.h"
+ #include "trackerentrystatus.h"
+ 
++class QHostAddress;
+ class QString;
+ 
+ namespace BitTorrent
+ {
++    namespace PeerBander
++    {
++        class Manager;
++    }
++
+     class InfoHash;
+     class Torrent;
+     class TorrentDescriptor;
+@@ -471,8 +477,12 @@ namespace BitTorrent
+ 
+         virtual void banIP(const QString &ip) = 0;
+         virtual void banPeerEndpoint(const PeerAddress &endpoint) = 0;
++        virtual void blockPeerEndpointTemporarily(const PeerAddress &endpoint, qint64 expiresAt) = 0;
++        virtual void blockPeerIPTemporarily(const QHostAddress &ip, qint64 expiresAt) = 0;
++        virtual void pruneTemporaryPeerBlocks(qint64 now) = 0;
+         virtual QStringList bannedPeerEndpoints() const = 0;
+         virtual void setBannedPeerEndpoints(const QStringList &endpoints) = 0;
++        virtual PeerBander::Manager *peerBander() const = 0;
+ 
+         virtual bool isKnownTorrent(const InfoHash &infoHash) const = 0;
+         virtual bool addTorrent(const TorrentDescriptor &torrentDescr, const AddTorrentParams &params = {}) = 0;
+diff --git a/src/base/bittorrent/sessionimpl.cpp b/src/base/bittorrent/sessionimpl.cpp
+index c56e7bb..134269c 100644
+--- a/src/base/bittorrent/sessionimpl.cpp
++++ b/src/base/bittorrent/sessionimpl.cpp
+@@ -106,6 +106,7 @@
+ #include "lttypecast.h"
+ #include "nativesessionextension.h"
+ #include "peeraddress.h"
++#include "peerbandermanager.h"
+ #include "portforwarderimpl.h"
+ #include "resumedatastorage.h"
+ #include "torrentcontentremover.h"
+@@ -692,6 +693,21 @@ SessionImpl::SessionImpl(QObject *parent)
+         updateTrackersFromURL();
+         m_updateTrackersFromURLTimer->start();
+     }
++
++    // PeerGuard is disabled on first run. Its observer is fed directly by the
++    // libtorrent handshake path, so enabling it never starts a Web API polling
++    // loop or a periodic all-torrent peer scan.
++    m_peerBander = new PeerBander::Manager(this, this);
++    m_nativeSessionExtension->setPeerObserver([peerBander = m_peerBander](PeerBander::PeerContext peer)
++    {
++        if (!peerBander->isRuntimeEnabled())
++            return;
++
++        QMetaObject::invokeMethod(peerBander, [peerBander, peer = std::move(peer)]() mutable
++        {
++            peerBander->observePeer(std::move(peer));
++        }, Qt::QueuedConnection);
++    });
+ }
+ 
+ SessionImpl::~SessionImpl()
+@@ -2507,11 +2523,34 @@ void SessionImpl::banPeerEndpoint(const PeerAddress &endpoint)
+     m_bannedPeerEndpoints = endpoints;
+ }
+ 
++void SessionImpl::blockPeerEndpointTemporarily(const PeerAddress &endpoint, const qint64 expiresAt)
++{
++    if (m_nativeSessionExtension)
++        m_nativeSessionExtension->blockPeerEndpointTemporarily(endpoint, expiresAt);
++}
++
++void SessionImpl::blockPeerIPTemporarily(const QHostAddress &ip, const qint64 expiresAt)
++{
++    if (m_nativeSessionExtension)
++        m_nativeSessionExtension->blockPeerIPTemporarily(ip, expiresAt);
++}
++
++void SessionImpl::pruneTemporaryPeerBlocks(const qint64 now)
++{
++    if (m_nativeSessionExtension)
++        m_nativeSessionExtension->pruneTemporaryPeerBlocks(now);
++}
++
+ QStringList SessionImpl::bannedPeerEndpoints() const
+ {
+     return m_bannedPeerEndpoints;
+ }
+ 
++PeerBander::Manager *SessionImpl::peerBander() const
++{
++    return m_peerBander;
++}
++
+ void SessionImpl::setBannedPeerEndpoints(const QStringList &endpoints)
+ {
+     QStringList normalizedEndpoints;
+diff --git a/src/base/bittorrent/sessionimpl.h b/src/base/bittorrent/sessionimpl.h
+index 3374d01..9b425ae 100644
+--- a/src/base/bittorrent/sessionimpl.h
++++ b/src/base/bittorrent/sessionimpl.h
+@@ -74,6 +74,11 @@ struct FileSearchResult;
+ 
+ namespace BitTorrent
+ {
++    namespace PeerBander
++    {
++        class Manager;
++    }
++
+     enum class MoveStorageMode;
+     enum class MoveStorageContext;
+ 
+@@ -444,8 +449,12 @@ namespace BitTorrent
+ 
+         void banIP(const QString &ip) override;
+         void banPeerEndpoint(const PeerAddress &endpoint) override;
++        void blockPeerEndpointTemporarily(const PeerAddress &endpoint, qint64 expiresAt) override;
++        void blockPeerIPTemporarily(const QHostAddress &ip, qint64 expiresAt) override;
++        void pruneTemporaryPeerBlocks(qint64 now) override;
+         QStringList bannedPeerEndpoints() const override;
+         void setBannedPeerEndpoints(const QStringList &endpoints) override;
++        PeerBander::Manager *peerBander() const override;
+ 
+         bool isKnownTorrent(const InfoHash &infoHash) const override;
+         bool addTorrent(const TorrentDescriptor &torrentDescr, const AddTorrentParams &params = {}) override;
+@@ -789,6 +798,7 @@ namespace BitTorrent
+ 
+         lt::session *m_nativeSession = nullptr;
+         NativeSessionExtension *m_nativeSessionExtension = nullptr;
++        PeerBander::Manager *m_peerBander = nullptr;
+ 
+         bool m_deferredConfigureScheduled = false;
+         bool m_IPFilteringConfigured = false;
+diff --git a/src/webui/CMakeLists.txt b/src/webui/CMakeLists.txt
+index 4597ed4..c1f1bbd 100644
+--- a/src/webui/CMakeLists.txt
++++ b/src/webui/CMakeLists.txt
+@@ -8,6 +8,7 @@ add_library(qbt_webui STATIC
+     api/clientdatacontroller.h
+     api/isessionmanager.h
+     api/logcontroller.h
++    api/peerbandercontroller.h
+     api/rsscontroller.h
+     api/searchcontroller.h
+     api/synccontroller.h
+@@ -26,6 +27,7 @@ add_library(qbt_webui STATIC
+     api/authcontroller.cpp
+     api/clientdatacontroller.cpp
+     api/logcontroller.cpp
++    api/peerbandercontroller.cpp
+     api/rsscontroller.cpp
+     api/searchcontroller.cpp
+     api/synccontroller.cpp
+diff --git a/src/webui/api/peerbandercontroller.cpp b/src/webui/api/peerbandercontroller.cpp
+new file mode 100644
+index 0000000..ed5459f
+--- /dev/null
++++ b/src/webui/api/peerbandercontroller.cpp
+@@ -0,0 +1,239 @@
++/*
++ * qBittorrent Precision PeerBander Web API
++ * Copyright (C) 2026 qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#include "peerbandercontroller.h"
++
++#include <algorithm>
++
++#include <QJsonArray>
++#include <QJsonObject>
++
++#include "base/bittorrent/peerbandermanager.h"
++#include "base/bittorrent/session.h"
++#include "base/global.h"
++#include "apierror.h"
++
++using namespace BitTorrent::PeerBander;
++
++namespace
++{
++    Manager *manager()
++    {
++        return BitTorrent::Session::instance()->peerBander();
++    }
++
++    bool parseBool(const QStringView value)
++    {
++        return (value == u"1") || (value.compare(u"true", Qt::CaseInsensitive) == 0)
++            || (value.compare(u"on", Qt::CaseInsensitive) == 0);
++    }
++
++    QJsonObject ruleToJson(const Rule &rule)
++    {
++        return
++        {
++            {u"id"_s, rule.id},
++            {u"enabled"_s, rule.enabled},
++            {u"priority"_s, rule.priority},
++            {u"clientFamily"_s, rule.clientFamily},
++            {u"clientVersion"_s, rule.clientVersion},
++            {u"peerId"_s, rule.peerIdPattern},
++            {u"ip"_s, rule.ipPattern},
++            {u"port"_s, rule.port},
++            {u"torrentHash"_s, rule.torrentHashPattern},
++            {u"action"_s, actionToString(rule.action)},
++            {u"comment"_s, rule.comment}
++        };
++    }
++
++    QJsonObject peerToJson(const PeerContext &peer)
++    {
++        return
++        {
++            {u"endpoint"_s, peer.endpoint.toString()},
++            {u"client"_s, peer.client},
++            {u"clientFamily"_s, peer.clientFamily},
++            {u"clientVersion"_s, peer.clientVersion},
++            {u"peerId"_s, peer.peerId},
++            {u"torrentHash"_s, peer.torrentHash},
++            {u"torrentName"_s, peer.torrentName},
++            {u"totalUpload"_s, peer.totalUpload},
++            {u"totalDownload"_s, peer.totalDownload},
++            {u"uploadSpeed"_s, peer.uploadSpeed},
++            {u"downloadSpeed"_s, peer.downloadSpeed}
++        };
++    }
++
++    QJsonObject decisionToJson(const Decision &decision)
++    {
++        return
++        {
++            {u"matched"_s, decision.matched},
++            {u"ruleId"_s, decision.ruleId},
++            {u"action"_s, actionToString(decision.action)},
++            {u"reason"_s, decision.reason}
++        };
++    }
++}
++
++void PeerBanderController::statusAction()
++{
++    const Manager *peerBander = manager();
++    setResult(QJsonObject
++    {
++        {u"version"_s, u"0.2.0-alpha.1"_s},
++        {u"mode"_s, u"event-driven-handshake"_s},
++        {u"available"_s, peerBander->isAvailable()},
++        {u"enabled"_s, peerBander->isEnabled()},
++        {u"scanInProgress"_s, peerBander->isScanInProgress()},
++        {u"lastScanTime"_s, peerBander->lastScanTime().toString(Qt::ISODateWithMs)},
++        {u"ruleCount"_s, peerBander->rules().size()},
++        {u"currentPeerCount"_s, peerBander->currentPeers().size()},
++        {u"eventCount"_s, peerBander->eventCount()},
++        {u"lastError"_s, peerBander->lastError()}
++    });
++}
++
++void PeerBanderController::rulesAction()
++{
++    QJsonArray result;
++    for (const Rule &rule : manager()->rules())
++        result.append(ruleToJson(rule));
++    setResult(result);
++}
++
++void PeerBanderController::peersAction()
++{
++    QJsonArray result;
++    for (const PeerContext &peer : manager()->currentPeers())
++    {
++        QJsonObject item = peerToJson(peer);
++        item[u"decision"_s] = decisionToJson(manager()->evaluate(peer));
++        result.append(item);
++    }
++    setResult(result);
++}
++
++void PeerBanderController::eventsAction()
++{
++    bool ok = true;
++    const int requestedLimit = params().value(u"limit"_s, u"100"_s).toInt(&ok);
++    if (!ok)
++        throw APIError(APIErrorType::BadParams, tr("'limit': invalid argument"));
++
++    QJsonArray result;
++    for (const Event &event : manager()->events(std::clamp(requestedLimit, 1, 1000)))
++    {
++        QJsonObject item = peerToJson(event.peer);
++        item[u"id"_s] = event.id;
++        item[u"timestamp"_s] = event.timestamp.toString(Qt::ISODateWithMs);
++        item[u"decision"_s] = decisionToJson(event.decision);
++        item[u"enforced"_s] = event.enforced;
++        result.append(item);
++    }
++    setResult(result);
++}
++
++void PeerBanderController::testRuleAction()
++{
++    requireParams({u"client"_s});
++
++    bool portOk = true;
++    const uint port = params().value(u"port"_s, u"0"_s).toUInt(&portOk);
++    if (!portOk || (port > 65535))
++        throw APIError(APIErrorType::BadParams, tr("'port': invalid argument"));
++
++    PeerContext peer
++    {
++        .endpoint = {.ip = QHostAddress(params().value(u"ip"_s)), .port = static_cast<ushort>(port)},
++        .client = params().value(u"client"_s),
++        .peerId = params().value(u"peerId"_s),
++        .torrentHash = params().value(u"torrentHash"_s)
++    };
++    const ClientIdentity identity = identifyClient(peer.client, peer.peerId);
++    peer.clientFamily = identity.family;
++    peer.clientVersion = identity.version;
++
++    QJsonObject result = peerToJson(peer);
++    result[u"decision"_s] = decisionToJson(manager()->evaluate(peer));
++    setResult(result);
++}
++
++void PeerBanderController::setEnabledAction()
++{
++    requireParams({u"enabled"_s});
++    if (!manager()->setEnabled(parseBool(params().value(u"enabled"_s))))
++        throw APIError(APIErrorType::Conflict, manager()->lastError());
++    setResult(QString());
++}
++
++void PeerBanderController::saveRuleAction()
++{
++    requireParams({u"clientFamily"_s, u"action"_s});
++
++    const std::optional<Action> action = actionFromString(params().value(u"action"_s));
++    if (!action)
++        throw APIError(APIErrorType::BadParams,
++            tr("'action': expected allow, observe, block_endpoint or block_ip"));
++
++    bool idOk = true;
++    bool priorityOk = true;
++    bool portOk = true;
++    const qint64 id = params().value(u"id"_s, u"0"_s).toLongLong(&idOk);
++    const int priority = params().value(u"priority"_s, u"0"_s).toInt(&priorityOk);
++    const uint port = params().value(u"port"_s, u"0"_s).toUInt(&portOk);
++    if (!idOk || (id < 0) || !priorityOk || !portOk || (port > 65535))
++        throw APIError(APIErrorType::BadParams, tr("Invalid numeric rule field"));
++
++    const Rule rule
++    {
++        .id = id,
++        .enabled = parseBool(params().value(u"enabled"_s, u"true"_s)),
++        .priority = priority,
++        .clientFamily = params().value(u"clientFamily"_s),
++        .clientVersion = params().value(u"clientVersion"_s, u"*"_s),
++        .peerIdPattern = params().value(u"peerId"_s, u"*"_s),
++        .ipPattern = params().value(u"ip"_s, u"*"_s),
++        .port = static_cast<ushort>(port),
++        .torrentHashPattern = params().value(u"torrentHash"_s, u"*"_s),
++        .action = *action,
++        .comment = params().value(u"comment"_s)
++    };
++
++    const qint64 savedId = manager()->saveRule(rule);
++    if (savedId <= 0)
++        throw APIError(APIErrorType::Conflict, manager()->lastError());
++    setResult(QJsonObject {{u"id"_s, savedId}});
++}
++
++void PeerBanderController::deleteRuleAction()
++{
++    requireParams({u"id"_s});
++    bool ok = false;
++    const qint64 id = params().value(u"id"_s).toLongLong(&ok);
++    if (!ok || (id <= 0))
++        throw APIError(APIErrorType::BadParams, tr("'id': invalid argument"));
++    if (!manager()->deleteRule(id))
++        throw APIError(APIErrorType::Conflict, manager()->lastError());
++    setResult(QString());
++}
++
++void PeerBanderController::clearEventsAction()
++{
++    if (!manager()->clearEvents())
++        throw APIError(APIErrorType::Conflict, manager()->lastError());
++    setResult(QString());
++}
++
++void PeerBanderController::scanNowAction()
++{
++    manager()->scanNow();
++    setResult(QString());
++}
+diff --git a/src/webui/api/peerbandercontroller.h b/src/webui/api/peerbandercontroller.h
+new file mode 100644
+index 0000000..375aa3e
+--- /dev/null
++++ b/src/webui/api/peerbandercontroller.h
+@@ -0,0 +1,35 @@
++/*
++ * qBittorrent Precision PeerBander Web API
++ * Copyright (C) 2026 qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#pragma once
++
++#include "apicontroller.h"
++
++class PeerBanderController final : public APIController
++{
++    Q_OBJECT
++    Q_DISABLE_COPY_MOVE(PeerBanderController)
++
++public:
++    using APIController::APIController;
++
++private slots:
++    void statusAction();
++    void rulesAction();
++    void peersAction();
++    void eventsAction();
++    void testRuleAction();
++
++    void setEnabledAction();
++    void saveRuleAction();
++    void deleteRuleAction();
++    void clearEventsAction();
++    void scanNowAction();
++};
+diff --git a/src/webui/webapplication.cpp b/src/webui/webapplication.cpp
+index 91d9c80..2d6a489 100644
+--- a/src/webui/webapplication.cpp
++++ b/src/webui/webapplication.cpp
+@@ -63,6 +63,7 @@
+ #include "api/authcontroller.h"
+ #include "api/clientdatacontroller.h"
+ #include "api/logcontroller.h"
++#include "api/peerbandercontroller.h"
+ #include "api/rsscontroller.h"
+ #include "api/searchcontroller.h"
+ #include "api/synccontroller.h"
+@@ -839,6 +840,7 @@ void WebApplication::sessionStartImpl(const QString &sessionId, const bool useCo
+     m_currentSession->registerAPIController(u"app"_s, new AppController(app(), m_currentSession));
+     m_currentSession->registerAPIController(u"clientdata"_s, new ClientDataController(m_clientDataStorage, app(), m_currentSession));
+     m_currentSession->registerAPIController(u"log"_s, new LogController(app(), m_currentSession));
++    m_currentSession->registerAPIController(u"peerguard"_s, new PeerBanderController(app(), m_currentSession));
+     m_currentSession->registerAPIController(u"torrentcreator"_s, new TorrentCreatorController(m_torrentCreationManager, app(), m_currentSession));
+     m_currentSession->registerAPIController(u"rss"_s, new RSSController(app(), m_currentSession));
+     m_currentSession->registerAPIController(u"search"_s, new SearchController(app(), m_currentSession));
+diff --git a/src/webui/webapplication.h b/src/webui/webapplication.h
+index 68ea999..8af5464 100644
+--- a/src/webui/webapplication.h
++++ b/src/webui/webapplication.h
+@@ -173,6 +173,11 @@ private:
+         {{u"auth"_s, u"login"_s}, Http::METHOD_POST},
+         {{u"auth"_s, u"logout"_s}, Http::METHOD_POST},
+         {{u"clientdata"_s, u"store"_s}, Http::METHOD_POST},
++        {{u"peerguard"_s, u"setEnabled"_s}, Http::METHOD_POST},
++        {{u"peerguard"_s, u"saveRule"_s}, Http::METHOD_POST},
++        {{u"peerguard"_s, u"deleteRule"_s}, Http::METHOD_POST},
++        {{u"peerguard"_s, u"clearEvents"_s}, Http::METHOD_POST},
++        {{u"peerguard"_s, u"scanNow"_s}, Http::METHOD_POST},
+         {{u"rss"_s, u"addFeed"_s}, Http::METHOD_POST},
+         {{u"rss"_s, u"addFolder"_s}, Http::METHOD_POST},
+         {{u"rss"_s, u"markAsRead"_s}, Http::METHOD_POST},
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+index e60caf5..ab4108c 100644
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -8,6 +8,7 @@ include_directories("../src")
+ set(testFiles
+     testalgorithm.cpp
+     testbittorrentpeeraddress.cpp
++    testbittorrentpeerbanderruleengine.cpp
+     testbittorrentpeerendpointblocklist.cpp
+     testbittorrenttrackerentry.cpp
+     testconceptsexplicitlyconvertibleto.cpp
+diff --git a/test/testbittorrentpeerbanderruleengine.cpp b/test/testbittorrentpeerbanderruleengine.cpp
+new file mode 100644
+index 0000000..893eb16
+--- /dev/null
++++ b/test/testbittorrentpeerbanderruleengine.cpp
+@@ -0,0 +1,126 @@
++/*
++ * qBittorrent Precision PeerBander tests
++ * Copyright (C) 2026 qBittorrent Precision contributors
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ */
++
++#include <QTest>
++
++#include "base/bittorrent/peerbanderruleengine.h"
++
++using namespace BitTorrent;
++using namespace BitTorrent::PeerBander;
++
++class TestPeerBanderRuleEngine final : public QObject
++{
++    Q_OBJECT
++
++private slots:
++    void testClientIdentity();
++    void testXunleiPeerIdIdentity();
++    void testVersionAllowOverridesFamilyBlock();
++    void testBlockScopes();
++    void testEndpointAndPeerIdMatch();
++    void testUnknownPeerDefaultsToObserve();
++};
++
++void TestPeerBanderRuleEngine::testClientIdentity()
++{
++    const ClientIdentity xunlei = identifyClient(u"Xunlei 0.0.1.9");
++    QCOMPARE(xunlei.family, u"Xunlei");
++    QCOMPARE(xunlei.version, u"0.0.1.9");
++
++    const ClientIdentity transmission = identifyClient(u"Transmission 4.0.6");
++    QCOMPARE(transmission.family, u"Transmission");
++    QCOMPARE(transmission.version, u"4.0.6");
++}
++
++void TestPeerBanderRuleEngine::testXunleiPeerIdIdentity()
++{
++    const ClientIdentity xunlei = identifyClient({}, u"-XL0019-");
++    QCOMPARE(xunlei.family, u"Xunlei");
++    QCOMPARE(xunlei.version, u"0.0.1.9");
++
++    const ClientIdentity namedXunlei = identifyClient(u"Xunlei", u"-XL0018-");
++    QCOMPARE(namedXunlei.family, u"Xunlei");
++    QCOMPARE(namedXunlei.version, u"0.0.1.8");
++}
++
++void TestPeerBanderRuleEngine::testVersionAllowOverridesFamilyBlock()
++{
++    RuleEngine engine;
++    engine.setRules(
++    {
++        {.id = 1, .priority = 100, .clientFamily = u"Xunlei", .clientVersion = u"0.0.1.9", .action = Action::Allow},
++        {.id = 2, .priority = 100, .clientFamily = u"Xunlei", .clientVersion = u"0.0.1.8", .action = Action::Allow},
++        {.id = 3, .priority = 10, .clientFamily = u"Xunlei", .clientVersion = u"*", .action = Action::BlockEndpoint}
++    });
++
++    PeerContext peer {.clientFamily = u"Xunlei", .clientVersion = u"0.0.1.9"};
++    QCOMPARE(engine.evaluate(peer).action, Action::Allow);
++
++    peer.clientVersion = u"0.0.1.7";
++    const Decision blocked = engine.evaluate(peer);
++    QCOMPARE(blocked.action, Action::BlockEndpoint);
++    QCOMPARE(blocked.ruleId, 3);
++}
++
++void TestPeerBanderRuleEngine::testBlockScopes()
++{
++    RuleEngine engine;
++    engine.setRules(
++    {
++        {.id = 1, .priority = 50, .clientFamily = u"Gopeed*", .action = Action::BlockIP},
++        {.id = 2, .priority = 10, .clientFamily = u"Xunlei", .action = Action::BlockEndpoint}
++    });
++
++    QCOMPARE(engine.evaluate({.clientFamily = u"Gopeed dev"}).action, Action::BlockIP);
++    QCOMPARE(engine.evaluate({.clientFamily = u"Xunlei"}).action, Action::BlockEndpoint);
++}
++
++void TestPeerBanderRuleEngine::testEndpointAndPeerIdMatch()
++{
++    RuleEngine engine;
++    engine.setRules(
++    {
++        {
++            .id = 4,
++            .priority = 50,
++            .clientFamily = u"*",
++            .clientVersion = u"*",
++            .peerIdPattern = u"-XL*",
++            .ipPattern = u"192.0.2.*",
++            .port = 6881,
++            .action = Action::BlockEndpoint
++        }
++    });
++
++    const PeerContext matching
++    {
++        .endpoint = {.ip = QHostAddress(u"192.0.2.8"), .port = 6881},
++        .peerId = u"-XL0019-"
++    };
++    QCOMPARE(engine.evaluate(matching).action, Action::BlockEndpoint);
++
++    PeerContext otherPort = matching;
++    otherPort.endpoint.port = 6882;
++    QCOMPARE(engine.evaluate(otherPort).action, Action::Observe);
++}
++
++void TestPeerBanderRuleEngine::testUnknownPeerDefaultsToObserve()
++{
++    RuleEngine engine;
++    engine.setRules({{.id = 1, .clientFamily = u"Xunlei", .action = Action::BlockEndpoint}});
++
++    const PeerContext peer {.clientFamily = u"qBittorrent", .clientVersion = u"5.2.3"};
++    const Decision decision = engine.evaluate(peer);
++    QCOMPARE(decision.action, Action::Observe);
++    QVERIFY(!decision.matched);
++}
++
++QTEST_APPLESS_MAIN(TestPeerBanderRuleEngine)
++#include "testbittorrentpeerbanderruleengine.moc"
+diff --git a/test/testbittorrentpeerendpointblocklist.cpp b/test/testbittorrentpeerendpointblocklist.cpp
+index 5408e0b..ed0b490 100644
+--- a/test/testbittorrentpeerendpointblocklist.cpp
++++ b/test/testbittorrentpeerendpointblocklist.cpp
+@@ -9,6 +9,7 @@
+  */
+ 
+ #include <QObject>
++#include <QDateTime>
+ #include <QTest>
+ 
+ #include "base/bittorrent/peerendpointblocklist.h"
+@@ -46,6 +47,28 @@ private slots:
+         QVERIFY(!blocklist.contains(BitTorrent::PeerAddress::parse(u"1.1.1.1:1234")));
+         QVERIFY(blocklist.contains(BitTorrent::PeerAddress::parse(u"2.2.2.2:4321")));
+     }
++
++
++    void testTemporaryEndpointAndIPMatching() const
++    {
++        BitTorrent::PeerEndpointBlocklist blocklist;
++        const qint64 future = QDateTime::currentMSecsSinceEpoch() + 60000;
++        const qint64 past = QDateTime::currentMSecsSinceEpoch() - 1;
++
++        blocklist.addTemporaryEndpoint(BitTorrent::PeerAddress::parse(u"1.1.1.1:1234"), future);
++        QVERIFY(blocklist.contains(BitTorrent::PeerAddress::parse(u"1.1.1.1:1234")));
++        QVERIFY(!blocklist.contains(BitTorrent::PeerAddress::parse(u"1.1.1.1:8526")));
++
++        blocklist.addTemporaryIP(QHostAddress(u"2.2.2.2"), future);
++        QVERIFY(blocklist.contains(BitTorrent::PeerAddress::parse(u"2.2.2.2:1234")));
++        QVERIFY(blocklist.contains(BitTorrent::PeerAddress::parse(u"2.2.2.2:8526")));
++
++        blocklist.pruneExpired(past);
++        QVERIFY(blocklist.contains(BitTorrent::PeerAddress::parse(u"2.2.2.2:8526")));
++        blocklist.pruneExpired(future);
++        QVERIFY(!blocklist.contains(BitTorrent::PeerAddress::parse(u"1.1.1.1:1234")));
++        QVERIFY(!blocklist.contains(BitTorrent::PeerAddress::parse(u"2.2.2.2:8526")));
++    }
+ };
+ 
+ QTEST_APPLESS_MAIN(TestBittorrentPeerEndpointBlocklist)
+
+

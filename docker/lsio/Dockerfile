@@ -5,7 +5,7 @@ FROM alpine:${ALPINE_VERSION} AS builder
 
 ARG LIBTORRENT_REF=v2.0.14
 ARG LIBTORRENT_COMMIT=aab2a10e2f60d9eac78e885a696736d043527794
-ARG QBT_PRECISION_VERSION=0.1.5
+ARG QBT_PRECISION_VERSION=0.2.0-alpha.1
 ARG QBT_UPSTREAM_VERSION=5.2.3
 ARG QBT_UPSTREAM_COMMIT=0b63c3d17373f6132ea211c9dcd4241284ccdfaf
 
@@ -75,6 +75,7 @@ RUN cmake \
         -DWEBUI=ON \
     && cmake --build build --parallel \
     && ./build/test/testbittorrentpeeraddress \
+    && ./build/test/testbittorrentpeerbanderruleengine \
     && ./build/test/testbittorrentpeerendpointblocklist \
     && cmake --install build \
     && /usr/bin/qbittorrent-nox --version | grep -F "qBittorrent v${QBT_UPSTREAM_VERSION}" \
@@ -89,7 +90,7 @@ RUN cmake \
 FROM lscr.io/linuxserver/qbittorrent:5.2.3
 
 ARG LIBTORRENT_REF=v2.0.14
-ARG QBT_PRECISION_VERSION=0.1.5
+ARG QBT_PRECISION_VERSION=0.2.0-alpha.1
 ARG QBT_UPSTREAM_VERSION=5.2.3
 ARG QBT_UPSTREAM_COMMIT=0b63c3d17373f6132ea211c9dcd4241284ccdfaf
 
@@ -105,7 +106,9 @@ LABEL org.opencontainers.image.title="qBittorrent Precision" \
       io.qbittorrent-precision.upstream-version="${QBT_UPSTREAM_VERSION}" \
       io.qbittorrent-precision.libtorrent-ref="${LIBTORRENT_REF}" \
       io.qbittorrent-precision.endpoint-control="ip+port" \
-      io.qbittorrent-precision.manual-ban-rules="ip-or-ip+port"
+      io.qbittorrent-precision.manual-ban-rules="ip-or-ip+port" \
+      io.qbittorrent-precision.peerguard="event-driven-handshake" \
+      io.qbittorrent-precision.peerguard-default="disabled"
 
 RUN apk --no-cache add \
         libgomp \

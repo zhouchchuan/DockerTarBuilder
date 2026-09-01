@@ -1,4 +1,4 @@
-name: Build qBittorrent Precision 0.1.5 for DS1823xs+
+name: Build qBittorrent Precision 0.2.0-alpha.1 for DS1823xs+
 
 on:
   workflow_dispatch:
@@ -19,26 +19,26 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
-      - name: Verify peer lifecycle safety invariants
+      - name: Verify built-in PeerGuard safety invariants
         shell: bash
         run: |
           set -euo pipefail
-          patch='docker/lsio/patches/0005-fix-precision-peer-lifecycle-stability.patch'
-          grep -F '+        const BitTorrent::PeerAddress m_endpoint;' "${patch}"
-          grep -F '+                throw std::runtime_error {"Peer endpoint is banned"};' "${patch}"
+          patch='docker/lsio/patches/0005-feat-precision-built-in-peerguard-alpha1.patch'
+          grep -F '+                throw std::runtime_error {"Peer is blocked by qBittorrent Precision PeerGuard"};' "${patch}"
+          grep -F '+    // deliberately event-driven and never starts an all-torrent peer scan.' "${patch}"
           if grep -F '+        lt::peer_connection_handle m_connection;' "${patch}"; then
-            echo 'The endpoint plugin must not retain a live peer connection handle.' >&2
+            echo 'PeerGuard must not retain a live peer connection handle.' >&2
             exit 1
           fi
           if grep -F '+                m_connection.disconnect' "${patch}"; then
-            echo 'The endpoint plugin must let libtorrent close the connection safely.' >&2
+            echo 'PeerGuard must let libtorrent close the connection safely.' >&2
             exit 1
           fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build V0.1.5 image TAR
+      - name: Build 0.2.0-alpha.1 image TAR
         uses: docker/build-push-action@v7
         env:
           DOCKER_BUILD_RECORD_UPLOAD: false
@@ -46,8 +46,8 @@ jobs:
           context: .
           file: docker/lsio/Dockerfile
           platforms: linux/amd64
-          tags: qbittorrent-precision:0.1.5
-          outputs: type=docker,dest=${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.5-amd64.tar
+          tags: qbittorrent-precision:0.2.0-alpha.1
+          outputs: type=docker,dest=${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.2.0-alpha.1-amd64.tar
           provenance: false
           sbom: false
           cache-from: type=gha,scope=precision-lsio-endpoint-amd64
@@ -57,7 +57,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          image="qbittorrent-precision:0.1.5"
+          image="qbittorrent-precision:0.2.0-alpha.1"
           container="precision-lsio-smoke"
           peer_container="precision-lsio-peer"
           config_dir="${RUNNER_TEMP}/precision-lsio-config"
@@ -65,7 +65,7 @@ jobs:
           peer_config_dir="${RUNNER_TEMP}/precision-lsio-peer-config"
           peer_downloads_dir="${RUNNER_TEMP}/precision-lsio-peer-downloads"
 
-          docker load --input "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.5-amd64.tar"
+          docker load --input "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.2.0-alpha.1-amd64.tar"
           test "$(docker image inspect --format '{{.Architecture}}' "${image}")" = "amd64"
           docker run --rm --entrypoint /app/qbittorrent-nox "${image}" --version | grep -F "qBittorrent v5.2.3"
 
@@ -105,6 +105,8 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "io.qbittorrent-precision.endpoint-control"}}' "${image}")" = "ip+port"
           test "$(docker image inspect --format '{{index .Config.Labels "io.qbittorrent-precision.manual-ban-rules"}}' "${image}")" = "ip-or-ip+port"
           test "$(docker image inspect --format '{{index .Config.Labels "io.qbittorrent-precision.libtorrent-ref"}}' "${image}")" = "v2.0.14"
+          test "$(docker image inspect --format '{{index .Config.Labels "io.qbittorrent-precision.peerguard"}}' "${image}")" = "event-driven-handshake"
+          test "$(docker image inspect --format '{{index .Config.Labels "io.qbittorrent-precision.peerguard-default"}}' "${image}")" = "disabled"
           docker run --rm --entrypoint grep "${image}" -F 'libtorrent v2.0.14 (aab2a10e2f60d9eac78e885a696736d043527794)' /sbom-precision.txt
 
           # Enable an authentication bypass only for the CI runner's loopback
@@ -142,6 +144,40 @@ jobs:
             > "${RUNNER_TEMP}/preferences-default.json"
           jq -e '.web_ui_session_timeout == 604800' \
             "${RUNNER_TEMP}/preferences-default.json"
+          curl --silent --show-error --fail-with-body \
+            'http://127.0.0.1:19191/api/v2/peerguard/status' \
+            > "${RUNNER_TEMP}/peerguard-status.json"
+          jq -e '.version == "0.2.0-alpha.1" and .mode == "event-driven-handshake" and .enabled == false' \
+            "${RUNNER_TEMP}/peerguard-status.json"
+          curl --silent --show-error --fail-with-body \
+            'http://127.0.0.1:19191/api/v2/peerguard/rules' \
+            > "${RUNNER_TEMP}/peerguard-rules.json"
+          jq -e 'any(.[]; .clientFamily == "Gopeed*" and .action == "block_ip")' \
+            "${RUNNER_TEMP}/peerguard-rules.json"
+          jq -e 'any(.[]; .clientFamily == "Xunlei" and .action == "block_endpoint")' \
+            "${RUNNER_TEMP}/peerguard-rules.json"
+          curl --silent --show-error --fail-with-body --get \
+            --data-urlencode 'client=Gopeed dev' \
+            --data-urlencode 'ip=192.0.2.41' \
+            --data-urlencode 'port=20001' \
+            'http://127.0.0.1:19191/api/v2/peerguard/testRule' \
+            > "${RUNNER_TEMP}/peerguard-gopeed.json"
+          jq -e '.decision.matched == true and .decision.action == "block_ip"' \
+            "${RUNNER_TEMP}/peerguard-gopeed.json"
+          curl --silent --show-error --fail-with-body --get \
+            --data-urlencode 'client=Xunlei 0.0.1.7' \
+            --data-urlencode 'ip=192.0.2.42' \
+            --data-urlencode 'port=20002' \
+            'http://127.0.0.1:19191/api/v2/peerguard/testRule' \
+            > "${RUNNER_TEMP}/peerguard-xunlei.json"
+          jq -e '.decision.matched == true and .decision.action == "block_endpoint"' \
+            "${RUNNER_TEMP}/peerguard-xunlei.json"
+          curl --silent --show-error --fail-with-body \
+            --data-urlencode 'enabled=true' \
+            'http://127.0.0.1:19191/api/v2/peerguard/setEnabled'
+          curl --silent --show-error --fail-with-body \
+            'http://127.0.0.1:19191/api/v2/peerguard/status' \
+            | jq -e '.enabled == true'
           curl --silent --show-error --fail-with-body \
             'http://127.0.0.1:19191/scripts/misc.js' \
             | grep -F 'buildTorrentUploadBatch'
@@ -189,6 +225,9 @@ jobs:
             "${RUNNER_TEMP}/preferences-restart.json"
           jq -e '.web_ui_session_timeout == 43200' \
             "${RUNNER_TEMP}/preferences-restart.json"
+          curl --silent --show-error --fail-with-body \
+            'http://127.0.0.1:19191/api/v2/peerguard/status' \
+            | jq -e '.enabled == true and .mode == "event-driven-handshake"'
 
           # Exercise the old crash path with a real peer. While libtorrent is
           # repeatedly building peer-info snapshots, add the exact live
@@ -360,16 +399,16 @@ jobs:
             exit 1
           fi
 
-          sha256sum "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.5-amd64.tar" \
-            > "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.1.5-amd64.tar.sha256"
+          sha256sum "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.2.0-alpha.1-amd64.tar" \
+            > "${RUNNER_TEMP}/qbittorrent-precision-ds1823xs-0.2.0-alpha.1-amd64.tar.sha256"
 
       - name: Upload DS1823xs+ image package
         uses: actions/upload-artifact@v4
         with:
-          name: qbittorrent-precision-ds1823xs-0.1.5-amd64
+          name: qbittorrent-precision-ds1823xs-0.2.0-alpha.1-amd64
           path: |
-            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.5-amd64.tar
-            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.1.5-amd64.tar.sha256
+            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.2.0-alpha.1-amd64.tar
+            ${{ runner.temp }}/qbittorrent-precision-ds1823xs-0.2.0-alpha.1-amd64.tar.sha256
           compression-level: 0
           if-no-files-found: error
           retention-days: 14
