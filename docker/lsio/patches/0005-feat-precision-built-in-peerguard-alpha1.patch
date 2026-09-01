@@ -858,13 +858,13 @@ index 0000000..e577453
 +
 +    const QList<Rule> defaults
 +    {
-+        {.priority = 100, .clientFamily = u"Xunlei", .clientVersion = u"0.0.1.9", .action = Action::Allow,
++        {.priority = 100, .clientFamily = u"Xunlei"_s, .clientVersion = u"0.0.1.9"_s, .action = Action::Allow,
 +            .comment = u"Allow configured Xunlei version 0.0.1.9"_s},
-+        {.priority = 100, .clientFamily = u"Xunlei", .clientVersion = u"0.0.1.8", .action = Action::Allow,
++        {.priority = 100, .clientFamily = u"Xunlei"_s, .clientVersion = u"0.0.1.8"_s, .action = Action::Allow,
 +            .comment = u"Allow configured Xunlei version 0.0.1.8"_s},
-+        {.priority = 50, .clientFamily = u"Gopeed*", .clientVersion = u"*", .action = Action::BlockIP,
++        {.priority = 50, .clientFamily = u"Gopeed*"_s, .clientVersion = u"*"_s, .action = Action::BlockIP,
 +            .comment = u"Block confirmed Gopeed leecher family by IP"_s},
-+        {.priority = 10, .clientFamily = u"Xunlei", .clientVersion = u"*", .action = Action::BlockEndpoint,
++        {.priority = 10, .clientFamily = u"Xunlei"_s, .clientVersion = u"*"_s, .action = Action::BlockEndpoint,
 +            .comment = u"Block other Xunlei versions by exact endpoint"_s}
 +    };
 +
@@ -1324,12 +1324,12 @@ index 0000000..d64262e
 +        qint64 id = 0;
 +        bool enabled = true;
 +        int priority = 0;
-+        QString clientFamily = u"*";
-+        QString clientVersion = u"*";
-+        QString peerIdPattern = u"*";
-+        QString ipPattern = u"*";
++        QString clientFamily {u"*"};
++        QString clientVersion {u"*"};
++        QString peerIdPattern {u"*"};
++        QString ipPattern {u"*"};
 +        ushort port = 0;
-+        QString torrentHashPattern = u"*";
++        QString torrentHashPattern {u"*"};
 +        Action action = Action::Observe;
 +        QString comment;
 +    };
@@ -1993,6 +1993,7 @@ index 0000000..893eb16
 +
 +using namespace BitTorrent;
 +using namespace BitTorrent::PeerBander;
++using namespace Qt::StringLiterals;
 +
 +class TestPeerBanderRuleEngine final : public QObject
 +{
@@ -2034,15 +2035,15 @@ index 0000000..893eb16
 +    RuleEngine engine;
 +    engine.setRules(
 +    {
-+        {.id = 1, .priority = 100, .clientFamily = u"Xunlei", .clientVersion = u"0.0.1.9", .action = Action::Allow},
-+        {.id = 2, .priority = 100, .clientFamily = u"Xunlei", .clientVersion = u"0.0.1.8", .action = Action::Allow},
-+        {.id = 3, .priority = 10, .clientFamily = u"Xunlei", .clientVersion = u"*", .action = Action::BlockEndpoint}
++        {.id = 1, .priority = 100, .clientFamily = u"Xunlei"_s, .clientVersion = u"0.0.1.9"_s, .action = Action::Allow},
++        {.id = 2, .priority = 100, .clientFamily = u"Xunlei"_s, .clientVersion = u"0.0.1.8"_s, .action = Action::Allow},
++        {.id = 3, .priority = 10, .clientFamily = u"Xunlei"_s, .clientVersion = u"*"_s, .action = Action::BlockEndpoint}
 +    });
 +
-+    PeerContext peer {.clientFamily = u"Xunlei", .clientVersion = u"0.0.1.9"};
++    PeerContext peer {.clientFamily = u"Xunlei"_s, .clientVersion = u"0.0.1.9"_s};
 +    QCOMPARE(engine.evaluate(peer).action, Action::Allow);
 +
-+    peer.clientVersion = u"0.0.1.7";
++    peer.clientVersion = u"0.0.1.7"_s;
 +    const Decision blocked = engine.evaluate(peer);
 +    QCOMPARE(blocked.action, Action::BlockEndpoint);
 +    QCOMPARE(blocked.ruleId, 3);
@@ -2053,12 +2054,12 @@ index 0000000..893eb16
 +    RuleEngine engine;
 +    engine.setRules(
 +    {
-+        {.id = 1, .priority = 50, .clientFamily = u"Gopeed*", .action = Action::BlockIP},
-+        {.id = 2, .priority = 10, .clientFamily = u"Xunlei", .action = Action::BlockEndpoint}
++        {.id = 1, .priority = 50, .clientFamily = u"Gopeed*"_s, .action = Action::BlockIP},
++        {.id = 2, .priority = 10, .clientFamily = u"Xunlei"_s, .action = Action::BlockEndpoint}
 +    });
 +
-+    QCOMPARE(engine.evaluate({.clientFamily = u"Gopeed dev"}).action, Action::BlockIP);
-+    QCOMPARE(engine.evaluate({.clientFamily = u"Xunlei"}).action, Action::BlockEndpoint);
++    QCOMPARE(engine.evaluate({.clientFamily = u"Gopeed dev"_s}).action, Action::BlockIP);
++    QCOMPARE(engine.evaluate({.clientFamily = u"Xunlei"_s}).action, Action::BlockEndpoint);
 +}
 +
 +void TestPeerBanderRuleEngine::testEndpointAndPeerIdMatch()
@@ -2069,10 +2070,10 @@ index 0000000..893eb16
 +        {
 +            .id = 4,
 +            .priority = 50,
-+            .clientFamily = u"*",
-+            .clientVersion = u"*",
-+            .peerIdPattern = u"-XL*",
-+            .ipPattern = u"192.0.2.*",
++            .clientFamily = u"*"_s,
++            .clientVersion = u"*"_s,
++            .peerIdPattern = u"-XL*"_s,
++            .ipPattern = u"192.0.2.*"_s,
 +            .port = 6881,
 +            .action = Action::BlockEndpoint
 +        }
@@ -2081,7 +2082,7 @@ index 0000000..893eb16
 +    const PeerContext matching
 +    {
 +        .endpoint = {.ip = QHostAddress(u"192.0.2.8"), .port = 6881},
-+        .peerId = u"-XL0019-"
++        .peerId = u"-XL0019-"_s
 +    };
 +    QCOMPARE(engine.evaluate(matching).action, Action::BlockEndpoint);
 +
@@ -2093,9 +2094,9 @@ index 0000000..893eb16
 +void TestPeerBanderRuleEngine::testUnknownPeerDefaultsToObserve()
 +{
 +    RuleEngine engine;
-+    engine.setRules({{.id = 1, .clientFamily = u"Xunlei", .action = Action::BlockEndpoint}});
++    engine.setRules({{.id = 1, .clientFamily = u"Xunlei"_s, .action = Action::BlockEndpoint}});
 +
-+    const PeerContext peer {.clientFamily = u"qBittorrent", .clientVersion = u"5.2.3"};
++    const PeerContext peer {.clientFamily = u"qBittorrent"_s, .clientVersion = u"5.2.3"_s};
 +    const Decision decision = engine.evaluate(peer);
 +    QCOMPARE(decision.action, Action::Observe);
 +    QVERIFY(!decision.matched);
