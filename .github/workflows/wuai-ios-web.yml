@@ -1,0 +1,49 @@
+name: Build WuAi iOS 1.0.2 Web Wrapper
+on:
+  push:
+    branches: [wuaizhibo-ios-v1.0.2-web]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wuai-web-v102-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: wuaizhibo-ios-v1.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 16.4
+        run: |
+          test -d /Applications/Xcode_16.4.app
+          sudo xcode-select -s /Applications/Xcode_16.4.app
+          xcodebuild -version
+      - name: Test build and sign
+        env:
+          IOS_P12_BASE64: ${{ secrets.WUAI_IOS_P12_BASE64 }}
+          IOS_PROFILE_BASE64: ${{ secrets.WUAI_IOS_PROFILE_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.WUAI_IOS_P12_PASSWORD }}
+        run: bash build-release.sh
+      - name: Upload IPA and verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: wazb-iOS-v1.0.2-web
+          path: |
+            wuaizhibo-ios-v1.0/build/*.ipa
+            wuaizhibo-ios-v1.0/build/SHA256.txt
+            wuaizhibo-ios-v1.0/build/toolchain.txt
+            wuaizhibo-ios-v1.0/build/recovery-tests.txt
+            wuaizhibo-ios-v1.0/build/signature-verification.txt
+            wuaizhibo-ios-v1.0/build/source-commit.txt
+          retention-days: 14
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wuai-web-build-diagnostics
+          path: wuaizhibo-ios-v1.0/build/*.log
+          retention-days: 3

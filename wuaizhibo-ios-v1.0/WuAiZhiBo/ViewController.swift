@@ -12,6 +12,18 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     private var launchTime = Date()
     private var orientationMask: UIInterfaceOrientationMask = .portrait
     private var isManagedFullscreen = false
+    private var recovery = NavigationRecovery()
+    private var activeNavigation: WKNavigation?
+    private var initiatedNavigation: WKNavigation?
+    private var currentRequest: URLRequest?
+    private var pendingMainRequest: URLRequest?
+    private var transitionPending = false
+    private var retryWork: DispatchWorkItem?
+    private var failureBar: UIStackView?
+    private var failureLabel: UILabel?
+    private var retryButton: UIButton?
+    private var failedRequest: URLRequest?
+    private let loadTimeout: TimeInterval = 120
 
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
@@ -27,6 +39,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     }
 
     deinit {
+        retryWork?.cancel()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: bridgeName)
     }
 
@@ -140,7 +153,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
 
     private func loadHome() {
         launchTime = Date()
-        webView.load(URLRequest(url: homeURL, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30))
+        startLoad(URLRequest(url: homeURL, cachePolicy: .useProtocolCachePolicy, timeoutInterval: loadTimeout))
     }
 
     private func hideSplash() {
@@ -158,16 +171,109 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         }
     }
 
-    private func showLoadError(_ text: String) {
+    private func startLoad(_ request: URLRequest, preservingRetries: Bool = false) {
+        retryWork?.cancel()
+        retryWork = nil
+        failureBar?.isHidden = true
+        failedRequest = nil
+        recovery.begin(preservingRetries: preservingRetries)
+        var request = request
+        request.timeoutInterval = max(request.timeoutInterval, loadTimeout)
+        currentRequest = request
+        pendingMainRequest = request
+        transitionPending = true
+        initiatedNavigation = webView.load(request)
+        activeNavigation = initiatedNavigation
+    }
+
+    private func showLoadError(for request: URLRequest?, error: NSError) {
         hideSplash()
-        let alert = UIAlertController(title: "加载失败", message: text, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "重试", style: .default) { [weak self] _ in
-            self?.splashView.isHidden = false
-            self?.splashView.alpha = 1
-            self?.loadHome()
-        })
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        present(alert, animated: true)
+        failedRequest = request
+        if failureBar == nil {
+            let label = UILabel()
+            label.textColor = .white
+            label.font = .systemFont(ofSize: 14)
+            label.numberOfLines = 0
+            let retry = UIButton(type: .system)
+            retry.setTitle("重试", for: .normal)
+            retry.setContentHuggingPriority(.required, for: .horizontal)
+            retry.addTarget(self, action: #selector(retryFailedPage), for: .touchUpInside)
+            let close = UIButton(type: .system)
+            close.setTitle("关闭", for: .normal)
+            close.setContentHuggingPriority(.required, for: .horizontal)
+            close.addTarget(self, action: #selector(dismissLoadError), for: .touchUpInside)
+            let bar = UIStackView(arrangedSubviews: [label, retry, close])
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            bar.axis = .horizontal
+            bar.alignment = .center
+            bar.spacing = 12
+            bar.isLayoutMarginsRelativeArrangement = true
+            bar.layoutMargins = UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+            bar.backgroundColor = UIColor(white: 0.12, alpha: 0.97)
+            view.addSubview(bar)
+            NSLayoutConstraint.activate([
+                bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                bar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
+            ])
+            failureBar = bar
+            failureLabel = label
+            retryButton = retry
+        }
+        let safeToReplay = ["GET", "HEAD"].contains((request?.httpMethod ?? "GET").uppercased())
+        retryButton?.setTitle(safeToReplay ? "重试" : "返回", for: .normal)
+        retryButton?.isHidden = request == nil
+        if error.domain == NSURLErrorDomain && error.code == NSURLErrorNotConnectedToInternet {
+            failureLabel?.text = "网络未连接，请连接网络后重试。"
+        } else if error.domain == NSURLErrorDomain &&
+                    [NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateUntrusted,
+                     NSURLErrorServerCertificateHasBadDate].contains(error.code) {
+            failureLabel?.text = "无法建立安全连接，请稍后重试。"
+        } else if !["GET", "HEAD"].contains((request?.httpMethod ?? "GET").uppercased()) {
+            failureLabel?.text = "提交未完成，请确认页面结果后再操作。"
+        } else {
+            failureLabel?.text = "网络较慢或暂时不可用，请稍后重试。"
+        }
+        failureBar?.isHidden = false
+        if let failureBar { view.bringSubviewToFront(failureBar) }
+    }
+
+    @objc private func retryFailedPage() {
+        guard let request = failedRequest else { return }
+        // Never replay a form/payment POST. Return to the retained page for an explicit resubmission.
+        guard ["GET", "HEAD"].contains((request.httpMethod ?? "GET").uppercased()) else {
+            dismissLoadError()
+            return
+        }
+        startLoad(request)
+    }
+
+    @objc private func dismissLoadError() {
+        failureBar?.isHidden = true
+    }
+
+    private func handleLoadFailure(_ navigation: WKNavigation?, error: Error) {
+        let error = error as NSError
+        // This check comes before any UI or retry work, including during navigation replacement.
+        if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled { return }
+        guard !transitionPending, let navigation, navigation === activeNavigation else { return }
+        let generation = recovery.generation
+        let request = currentRequest
+        switch recovery.fail(error, generation: generation, method: request?.httpMethod ?? "GET") {
+        case .ignore:
+            return
+        case .retry(let delay):
+            guard let request else { showLoadError(for: nil, error: error); return }
+            retryWork?.cancel()
+            let task = DispatchWorkItem { [weak self] in
+                guard let self, self.recovery.generation == generation, !self.transitionPending else { return }
+                self.startLoad(request, preservingRetries: true)
+            }
+            retryWork = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
+        case .showFailure:
+            showLoadError(for: request, error: error)
+        }
     }
 
     private func setManagedOrientation(_ mode: String) {
@@ -211,16 +317,41 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
 
     // MARK: WKNavigationDelegate
 
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        retryWork?.cancel()
+        retryWork = nil
+        failureBar?.isHidden = true
+        failedRequest = nil
+        if navigation !== initiatedNavigation {
+            recovery.begin()
+            currentRequest = pendingMainRequest
+        }
+        initiatedNavigation = nil
+        activeNavigation = navigation
+        transitionPending = false
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        guard navigation === activeNavigation else { return }
+        // Keep the original branded splash and minimum display time; do not wait for slow subresources.
+        hideSplash()
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard navigation === activeNavigation else { return }
+        recovery.finish()
+        retryWork?.cancel()
+        retryWork = nil
+        failureBar?.isHidden = true
         hideSplash()
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        showLoadError(error.localizedDescription)
+        handleLoadFailure(navigation, error: error)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        showLoadError(error.localizedDescription)
+        handleLoadFailure(navigation, error: error)
     }
 
     func webView(
@@ -235,8 +366,8 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
 
         if navigationAction.targetFrame == nil {
             if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
-                webView.load(navigationAction.request)
                 decisionHandler(.cancel)
+                startLoad(navigationAction.request)
                 return
             }
         }
@@ -247,6 +378,11 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         }
 
         if scheme == "http" || scheme == "https" || scheme == "about" || scheme == "data" || scheme == "blob" {
+            if navigationAction.targetFrame?.isMainFrame == true {
+                retryWork?.cancel()
+                retryWork = nil
+                pendingMainRequest = navigationAction.request
+            }
             decisionHandler(.allow)
         } else {
             openExternal(url)
@@ -262,13 +398,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
-            if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
-                webView.load(navigationAction.request)
-            } else {
-                openExternal(url)
-            }
-        }
+        // New-window links are handled once in decidePolicyFor; do not issue a second load.
         return nil
     }
 
