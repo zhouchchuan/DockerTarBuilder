@@ -1,0 +1,1 @@
+{"name":"entry","version":"1.0.0","dependencies":{"libwaimedia.so":"file:./src/main/cpp/types/libwaimedia"}}

@@ -1,0 +1,11 @@
+oh_modules/
+.hvigor/
+**/build/
+native-deps/
+entry/libs/
+local.properties
+*.p12
+*.p7b
+*.cer
+entry/src/main/resources/rawfile/ca.pem
+entry/src/main/resources/rawfile/licenses/

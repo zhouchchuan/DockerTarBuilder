@@ -1,0 +1,104 @@
+name: 吾爱直播 HarmonyOS 1.0.0
+on:
+  workflow_dispatch:
+  push:
+    branches: [wuaizhibo-harmonyos-v1.0.0]
+    paths: ['HarmonyOS/**', '.github/workflows/wuai-harmony.yml']
+permissions:
+  contents: read
+concurrency:
+  group: wuai-harmony-v100
+  cancel-in-progress: true
+jobs:
+  hap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Restore official SDK
+        uses: actions/cache@v4
+        with:
+          path: /opt/harmony-cli
+          key: harmony-cli-linux-5.0.3.906-v1
+      - name: Install verified official toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y aria2 ninja-build meson pkg-config libgl1 ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libegl1-mesa-dev libgles2-mesa-dev
+          if [ ! -d /opt/harmony-cli/command-line-tools ]; then
+            aria2c --max-connection-per-server=4 --split=4 --max-tries=5 --retry-wait=5 --dir=/tmp --out=harmony.zip https://repo.huaweicloud.com/harmonyos/ohpm/5.0.3/commandline-tools-linux-x64-5.0.3.906.zip
+            echo 'c6fe61299e1b05e4023e643a319ee74c3eb369af7edecd5c3f1795b16f9db6af  /tmp/harmony.zip' | sha256sum -c -
+            sudo mkdir -p /opt/harmony-cli
+            sudo chown "$USER" /opt/harmony-cli
+            unzip -q /tmp/harmony.zip -d /opt/harmony-cli
+          fi
+          TOOL=/opt/harmony-cli/command-line-tools
+          echo "DEVECO_SDK_HOME=$TOOL/sdk" >> "$GITHUB_ENV"
+          echo "OHOS_NDK_HOME=$TOOL/sdk/default/openharmony/native" >> "$GITHUB_ENV"
+          echo "$TOOL/bin" >> "$GITHUB_PATH"
+          echo "$TOOL/tool/node/bin" >> "$GITHUB_PATH"
+      - name: Save SDK
+        uses: actions/cache/save@v4
+        with:
+          path: /opt/harmony-cli
+          key: harmony-cli-linux-5.0.3.906-v1
+      - name: Test navigation and media handoff
+        working-directory: HarmonyOS
+        run: |
+          node tests/bridge-test.cjs
+          node tests/recovery-test.cjs "$DEVECO_SDK_HOME/default/openharmony/ets/build-tools/ets-loader/node_modules/typescript/lib/typescript.js"
+      - name: Restore decoder dependencies
+        uses: actions/cache@v4
+        with:
+          path: HarmonyOS/native-deps
+          key: wuai-api12-ffmpeg801-dav1d153-openssl359-v1
+      - name: Compile AV1 and HTTPS for HarmonyOS arm64
+        run: bash HarmonyOS/ci/https-deps.sh
+      - name: Save compiled dependencies
+        uses: actions/cache/save@v4
+        with:
+          path: HarmonyOS/native-deps
+          key: wuai-api12-ffmpeg801-dav1d153-openssl359-v1
+      - name: Build unsigned native HAP
+        working-directory: HarmonyOS
+        run: |
+          npm config set @ohos:registry https://repo.harmonyos.com/npm/
+          ohpm config set registry https://ohpm.openharmony.cn/ohpm/
+          ohpm install --all
+          hvigorw --mode module -p product=default -p module=entry@default -p buildMode=release assembleHap --no-daemon --stacktrace
+      - name: Decode AV1 and verify video pixels and TLS
+        working-directory: HarmonyOS
+        run: bash ci/media-tests.sh | tee media-test-results.txt
+      - name: Verify and package deliverables
+        working-directory: HarmonyOS
+        run: |
+          mkdir -p dist/corresponding-source
+          HAP=$(find entry/build -name '*unsigned.hap' -print -quit)
+          test -n "$HAP"
+          cp "$HAP" dist/wazb-HarmonyOS-v1.0.0-arm64-unsigned.hap
+          python3 ci/verify-hap.py dist/wazb-HarmonyOS-v1.0.0-arm64-unsigned.hap
+          cp native-deps/media/ffmpeg-8.0.1.tar.xz native-deps/media/dav1d-1.5.3.tar.xz native-deps/media/openssl-3.5.9.tar.gz dist/corresponding-source/
+          cp native-deps/headers/nlohmann/json.hpp dist/corresponding-source/
+          cp -r ci entry/src/main/resources/rawfile/licenses dist/corresponding-source/
+          cp media-test-results.txt README.md dist/
+          printf 'commit=%s\nrun=%s\nminimum=HarmonyOS 5.0 API12\nsigned=false\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > dist/build-record.txt
+          find dist -type f ! -name SHA256.txt -print0 | sort -z | xargs -0 sha256sum > dist/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wazb-HarmonyOS-v1.0.0-unsigned
+          path: HarmonyOS/dist/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve compiler diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harmony-build-diagnostics
+          path: |
+            HarmonyOS/.hvigor/report/
+            HarmonyOS/native-deps/media/ffmpeg-8.0.1/ffbuild/config.log
+          if-no-files-found: ignore
