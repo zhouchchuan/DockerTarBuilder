@@ -13,5 +13,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     app=config['app']
     assert app['bundleName']=='com.chatapp.bqimvip'
     assert app['versionName']=='1.0.0'
-    assert app['minAPIVersion']==12
+    assert app['minAPIVersion']==50000012
+    assert app['targetAPIVersion']==50000012
+    assert not app.get('debug',False), 'Expected release HAP'
     print('PASS HAP: ArkTS bytecode, six ARM64 ELF libraries, dav1d, HTTPS, CA, API12, version 1.0.0')

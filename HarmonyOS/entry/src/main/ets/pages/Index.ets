@@ -61,7 +61,7 @@ struct Index {
   }
   begin(address: string): void {
     clearTimeout(this.retryTimer); clearTimeout(this.deadline);
-    this.recovery.begin(address, this.retrying); this.retrying = false; this.banner = '';
+    this.recovery.begin(address, this.retrying); this.banner = '';
     const generation = this.recovery.generation;
     this.deadline = setTimeout(() => {
       if (generation === this.recovery.generation && !this.recovery.committed && !this.recovery.failed) {
@@ -75,7 +75,7 @@ struct Index {
   }
   visible(address: string): void {
     if (!this.recovery.visible(address)) return;
-    clearTimeout(this.deadline); clearTimeout(this.retryTimer); this.banner = ''; this.hideSplash();
+    clearTimeout(this.deadline); clearTimeout(this.retryTimer); this.retrying = false; this.banner = ''; this.hideSplash();
   }
   fail(address: string, code: number, mainFrame: boolean): void {
     const wait = this.recovery.failure(address, code, mainFrame);
@@ -140,6 +140,7 @@ struct Index {
           .onLoadIntercept((event) => {
             const request = event.data;
             if (request.isMainFrame()) this.recovery.method = request.getRequestMethod();
+            if (request.isMainFrame() && request.isRequestGesture() && !request.isRedirect()) this.retrying = false;
             const address = request.getRequestUrl();
             if (/^(weixin|alipay|alipays):/i.test(address) && request.isMainFrame() && request.isRequestGesture()) {
               (getContext(this) as common.UIAbilityContext).startAbility({ action: 'ohos.want.action.viewData', uri: address }).catch(() => { this.banner = '未找到可打开此链接的应用'; });
@@ -149,11 +150,14 @@ struct Index {
           })
           .onPageBegin((event) => { this.begin(event.url); })
           .onPageVisible((event) => { this.visible(event.url); })
-          .onErrorReceive((event) => { this.fail(event.request.getRequestUrl(), event.error.getErrorCode(), event.request.isMainFrame()); })
+          .onErrorReceive((event) => {
+            if (event.request.isMainFrame() && event.request.getRequestUrl() === this.recovery.url) this.recovery.method = event.request.getRequestMethod();
+            this.fail(event.request.getRequestUrl(), event.error.getErrorCode(), event.request.isMainFrame());
+          })
           .onHttpErrorReceive((event) => {
             if (event.request.isMainFrame() && event.response.getResponseCode() >= 500) this.fail(event.request.getRequestUrl(), -2, true);
           })
-          .onFullScreenEnter((event) => { this.fullScreenHandler = event.handler; this.orient(event.videoWidth > event.videoHeight); })
+          .onFullScreenEnter((event) => { this.fullScreenHandler = event.handler; this.orient((event.videoWidth ?? 0) > (event.videoHeight ?? 0)); })
           .onFullScreenExit(() => { this.fullScreenHandler = undefined; this.orient(false); })
           .backgroundColor('#051229').width('100%').height('100%')
       }

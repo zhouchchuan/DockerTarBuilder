@@ -85,6 +85,7 @@ jobs:
           cp native-deps/headers/nlohmann/json.hpp dist/corresponding-source/
           cp -r ci entry/src/main/resources/rawfile/licenses dist/corresponding-source/
           cp media-test-results.txt README.md dist/
+          git -C .. archive --format=zip --output HarmonyOS/dist/wazb-HarmonyOS-v1.0.0-source.zip "$GITHUB_SHA" HarmonyOS .github/workflows/wuai-harmony.yml
           printf 'commit=%s\nrun=%s\nminimum=HarmonyOS 5.0 API12\nsigned=false\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > dist/build-record.txt
           find dist -type f ! -name SHA256.txt -print0 | sort -z | xargs -0 sha256sum > dist/SHA256.txt
       - uses: actions/upload-artifact@v4

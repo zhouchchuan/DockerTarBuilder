@@ -10,7 +10,7 @@ export struct CompatPlayer {
   onClose: (position: number) => void = () => {};
   onSize: (width: number, height: number) => void = () => {};
   @StorageLink('wuaiForeground') @Watch('foregroundChanged') foreground: boolean = true;
-  @State position: number = 0;
+  @State playbackPosition: number = 0;
   @State duration: number = 0;
   @State playing: boolean = false;
   @State waiting: boolean = true;
@@ -46,7 +46,7 @@ export struct CompatPlayer {
     try {
       const s = await command({ op: 'status', token: this.token });
       if (this.closing || this.disposed || s.stale) return;
-      this.position = s.position ?? 0; this.duration = s.duration ?? 0;
+      this.playbackPosition = s.position ?? 0; this.duration = s.duration ?? 0;
       this.ready = s.ready ?? false; this.playing = s.playing ?? false;
       this.waiting = s.waiting ?? false; this.subtitle = s.subtitle ?? '';
       if (s.error) { this.message = '视频加载失败，可返回网页或重试'; this.waiting = false; }
@@ -68,7 +68,7 @@ export struct CompatPlayer {
   async toggle(): Promise<void> {
     if (!this.ready || this.closing) return;
     try {
-      if (this.duration > 0 && this.position >= this.duration - 100) await command({ op: 'seek', token: this.token, position: 0 });
+      if (this.duration > 0 && this.playbackPosition >= this.duration - 100) await command({ op: 'seek', token: this.token, position: 0 });
       await command({ op: this.playing ? 'pause' : 'play', token: this.token });
       await this.poll();
     } catch (_) { this.message = '播放操作失败，请重试'; }
@@ -82,7 +82,7 @@ export struct CompatPlayer {
     this.closing = true; clearInterval(this.timer);
     if (this.opening) await this.opening;
     try { if (this.token >= 0) await command({ op: 'close', token: this.token }); }
-    finally { this.token = -1; this.onClose(this.position); }
+    finally { this.token = -1; this.onClose(this.playbackPosition); }
   }
   aboutToDisappear(): void {
     this.disposed = true; clearInterval(this.timer);
@@ -112,8 +112,8 @@ export struct CompatPlayer {
         if (this.subtitle) { Text(this.subtitle).fontColor(Color.White).fontSize(18).backgroundColor('#99000000').padding(8) }
         Row({ space: 12 }) {
           Button(this.playing ? '暂停' : '播放').onClick(() => { this.toggle(); }).enabled(this.ready && !this.closing)
-          Text(this.clock(this.position)).fontColor(Color.White).fontSize(12)
-          Slider({ value: this.position, min: 0, max: Math.max(1, this.duration), step: 1000 })
+          Text(this.clock(this.playbackPosition)).fontColor(Color.White).fontSize(12)
+          Slider({ value: this.playbackPosition, min: 0, max: Math.max(1, this.duration), step: 1000 })
             .layoutWeight(1).enabled(this.ready && this.duration > 0 && !this.closing)
             .onChange((value: number, mode: SliderChangeMode) => { if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) this.seek(value); })
           Text(this.duration > 0 ? this.clock(this.duration) : '直播').fontColor(Color.White).fontSize(12)

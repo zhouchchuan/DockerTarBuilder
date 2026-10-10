@@ -300,7 +300,9 @@ class Engine {
         // Silence during starvation advances the clock so a video-filled queue can
         // drain and the demuxer can reach the next interleaved audio packet.
         if(filled>0){lastAudioAt=monotonicMs();audioSamples+=filled/4;}
-        if(filled<bytes && !eof)position=position.load()+double(bytes-filled)/192000;
+        // If both queues are empty during a slow download, freeze the media
+        // clock instead of skipping all frames received after the outage.
+        if(filled<bytes && !eof && !video.empty())position=position.load()+double(bytes-filled)/192000;
         wake.notify_all();
     }
     void render() {
@@ -340,7 +342,7 @@ public:
         else if(url.rfind("https://",0)!=0 || url.size()>8192 || url.find_first_of("\r\n")!=url.npos || caFile.empty())throw std::runtime_error("兼容播放需要有效的 HTTPS 视频地址与证书库");
     }
     ~Engine(){stop();if(fd>=0)::close(fd);}
-    void start(){av_log_set_level(AV_LOG_ERROR);decoderThread=std::thread([this]{decode();});renderThread=std::thread([this]{render();});}
+    void start(){av_log_set_level(AV_LOG_QUIET);decoderThread=std::thread([this]{decode();});renderThread=std::thread([this]{render();});}
     void stop(){stopped=true;wake.notify_all();if(decoderThread.joinable())decoderThread.join();if(renderThread.joinable())renderThread.join();}
     void pause(bool value){paused=value;wake.notify_all();}
     void seek(int64_t ms){if(ms<0)ms=0;if(duration>0)ms=std::min(ms,std::max<int64_t>(0,int64_t(duration*1000)-1));requestedSeek=ms;wake.notify_all();}
