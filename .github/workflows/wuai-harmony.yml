@@ -72,7 +72,9 @@ jobs:
           hvigorw --mode module -p product=default -p module=entry@default -p buildMode=release assembleHap --no-daemon --stacktrace
       - name: Decode AV1 and verify video pixels and TLS
         working-directory: HarmonyOS
-        run: bash ci/media-tests.sh | tee media-test-results.txt
+        run: |
+          set -euo pipefail
+          bash ci/media-tests.sh | tee media-test-results.txt
       - name: Verify and package deliverables
         working-directory: HarmonyOS
         run: |
