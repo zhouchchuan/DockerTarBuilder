@@ -13,6 +13,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     private var orientationMask: UIInterfaceOrientationMask = .portrait
     private var isManagedFullscreen = false
     private var recovery = NavigationRecovery()
+    private let audioCoordinator = WebAudioCoordinator()
     private var activeNavigation: WKNavigation?
     private var initiatedNavigation: WKNavigation?
     private var currentRequest: URLRequest?
@@ -45,7 +46,8 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
 
     private func buildWebView() {
         let userContent = WKUserContentController()
-        userContent.add(self, name: bridgeName)
+        userContent.add(WeakScriptHandler(self), name: bridgeName)
+        audioCoordinator.install(on: userContent)
         userContent.addUserScript(WKUserScript(
             source: Self.bridgeScript,
             injectionTime: .atDocumentEnd,
@@ -60,6 +62,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         webView = WKWebView(frame: .zero, configuration: config)
+        audioCoordinator.attach(webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -318,6 +321,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     // MARK: WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        audioCoordinator.invalidate()
         retryWork?.cancel()
         retryWork = nil
         failureBar?.isHidden = true
