@@ -80,7 +80,7 @@ final class BrowserSupportTests: XCTestCase {
             prepared.fulfill()
         }
         wait(for: [prepared], timeout: 20)
-        XCTAssertNil(URLCache.shared.cachedResponse(for: request))
+        waitForURLCacheRemoval(request)
         let cookiesRead = expectation(description: "read preserved login cookie")
         store.httpCookieStore.getAllCookies { cookies in
             XCTAssertTrue(cookies.contains { $0.name == "login" && $0.value == "retained" })
@@ -102,7 +102,16 @@ final class BrowserSupportTests: XCTestCase {
         let manualRetry = expectation(description: "manual retry clears again")
         BrowserCache.refresh(store) { manualRetry.fulfill() }
         wait(for: [manualRetry], timeout: 20)
-        XCTAssertNil(URLCache.shared.cachedResponse(for: request))
+        waitForURLCacheRemoval(request)
+    }
+
+    private func waitForURLCacheRemoval(_ request: URLRequest) {
+        // Foundation disk eviction is independent of the WebKit data-store completion.
+        // The app also ignores local cache on its retry request; don't assume synchronous eviction.
+        let removed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            URLCache.shared.cachedResponse(for: request) == nil
+        }, object: nil)
+        wait(for: [removed], timeout: 10)
     }
 
     @MainActor func testWebKitScriptEpisodeAndPopupKeepOpener() {
