@@ -7,6 +7,7 @@ build/recovery-tests | tee build/recovery-tests.txt
 swiftc WuAiZhiBo/AudioRecovery.swift Tests/Audio/main.swift -o build/audio-tests
 build/audio-tests | tee build/audio-tests.txt
 node Tests/audio-bridge.test.cjs | tee build/audio-bridge-tests.txt
+swift test 2>&1 | tee build/browser-tests.log
 xcodebuild -project WuAiZhiBo.xcodeproj -scheme WuAiZhiBo -configuration Release \
   -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' \
@@ -19,8 +20,8 @@ import hashlib, pathlib, plistlib, sys
 app = pathlib.Path(sys.argv[1])
 info = plistlib.loads((app/'Info.plist').read_bytes())
 assert info['CFBundleIdentifier'] == 'com.chatapp.bqimvip'
-assert info['CFBundleShortVersionString'] == '1.0.3'
-assert info['CFBundleVersion'] == '4'
+assert info['CFBundleShortVersionString'] == '1.0.4'
+assert info['CFBundleVersion'] == '5'
 for path in pathlib.Path('PreservedResources').rglob('*'):
     if path.is_file():
         assert path.read_bytes() == (app/path.relative_to('PreservedResources')).read_bytes()
@@ -28,7 +29,7 @@ assert not (app/'Frameworks/MobileVLCKit.framework').exists()
 assert (app/'AudioRecovery.js').is_file()
 assert not (app/'embedded.mobileprovision').exists()
 PY
-NAME=wazb-iOS-v1.0.3-web-unsigned
+NAME=wazb-iOS-v1.0.4-web-unsigned
 mkdir -p build/package/Payload
 cp -R "$APP" build/package/Payload/
 (cd build/package && zip -qry "../$NAME.ipa" Payload)

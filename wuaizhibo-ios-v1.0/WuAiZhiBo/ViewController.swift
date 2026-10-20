@@ -1,11 +1,23 @@
 import UIKit
 import WebKit
+import OSLog
 
 final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     private let homeURL = URL(string: "https://jiami.ttplays.uk:6067/")!
     private let trustedHost = "jiami.ttplays.uk"
     private let bridgeName = "WuAiNative"
     private let minimumSplashTime: TimeInterval = 1.0
+    private let popupConfiguration: WKWebViewConfiguration?
+    private let popupDepth: Int
+    private let navigationLog = Logger(subsystem: "com.chatapp.bqimvip", category: "Navigation")
+
+    init(configuration: WKWebViewConfiguration? = nil, popupDepth: Int = 0) {
+        self.popupConfiguration = configuration
+        self.popupDepth = popupDepth
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("Programmatic view controller") }
 
     private var webView: WKWebView!
     private var splashView: UIView!
@@ -35,8 +47,10 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         super.viewDidLoad()
         view.backgroundColor = UIColor(red: 0.02, green: 0.07, blue: 0.16, alpha: 1.0)
         buildWebView()
-        buildSplash()
-        loadHome()
+        if popupConfiguration == nil {
+            buildSplash()
+            BrowserCache.prepare(webView.configuration.websiteDataStore) { [weak self] in self?.loadHome() }
+        }
     }
 
     deinit {
@@ -54,9 +68,9 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
             forMainFrameOnly: true
         ))
 
-        let config = WKWebViewConfiguration()
+        let config = popupConfiguration ?? WKWebViewConfiguration()
         config.userContentController = userContent
-        config.websiteDataStore = .default()
+        if popupConfiguration == nil { config.websiteDataStore = .default() }
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
@@ -76,10 +90,24 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         }
 
         view.addSubview(webView)
+        var webTop = view.topAnchor
+        if popupConfiguration != nil {
+            let close = UIButton(type: .system)
+            close.setTitle("关闭新页面", for: .normal)
+            close.addTarget(self, action: #selector(closePopup), for: .touchUpInside)
+            close.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(close)
+            NSLayoutConstraint.activate([
+                close.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+                close.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+                close.heightAnchor.constraint(equalToConstant: 44)
+            ])
+            webTop = close.bottomAnchor
+        }
         NSLayoutConstraint.activate([
             webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: view.topAnchor),
+            webView.topAnchor.constraint(equalTo: webTop),
             webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
     }
@@ -156,7 +184,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
 
     private func loadHome() {
         launchTime = Date()
-        startLoad(URLRequest(url: homeURL, cachePolicy: .useProtocolCachePolicy, timeoutInterval: loadTimeout))
+        startLoad(URLRequest(url: homeURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: loadTimeout))
     }
 
     private func hideSplash() {
@@ -180,8 +208,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         failureBar?.isHidden = true
         failedRequest = nil
         recovery.begin(preservingRetries: preservingRetries)
-        var request = request
-        request.timeoutInterval = max(request.timeoutInterval, loadTimeout)
+        let request = NavigationRouting.freshRequest(request)
         currentRequest = request
         pendingMainRequest = request
         transitionPending = true
@@ -234,9 +261,15 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
             failureLabel?.text = "无法建立安全连接，请稍后重试。"
         } else if !["GET", "HEAD"].contains((request?.httpMethod ?? "GET").uppercased()) {
             failureLabel?.text = "提交未完成，请确认页面结果后再操作。"
+        } else if error.domain == NSURLErrorDomain &&
+                    [NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost, NSURLErrorCannotFindHost,
+                     NSURLErrorCannotConnectToHost, NSURLErrorDNSLookupFailed].contains(error.code) {
+            failureLabel?.text = "页面暂时无法连接，请重试。"
         } else {
-            failureLabel?.text = "网络较慢或暂时不可用，请稍后重试。"
+            failureLabel?.text = "页面未能打开，请重试。"
         }
+        let domain = error.domain == NSURLErrorDomain ? "URL" : (error.domain == "WebKitErrorDomain" ? "WebKit" : "页面")
+        failureLabel?.text = (failureLabel?.text ?? "页面未能打开。") + "（\(domain) \(error.code)）"
         failureBar?.isHidden = false
         if let failureBar { view.bringSubviewToFront(failureBar) }
     }
@@ -248,7 +281,22 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
             dismissLoadError()
             return
         }
-        startLoad(request)
+        // User retry refreshes the page cache after host/IP changes, preserving login data.
+        retryWork?.cancel()
+        recovery.begin()
+        let generation = recovery.generation
+        transitionPending = true
+        activeNavigation = nil
+        initiatedNavigation = nil
+        webView.stopLoading()
+        audioCoordinator.invalidate()
+        retryButton?.isEnabled = false
+        BrowserCache.refresh(webView.configuration.websiteDataStore) { [weak self] in
+            guard let self else { return }
+            self.retryButton?.isEnabled = true
+            guard self.recovery.generation == generation else { return }
+            self.startLoad(request)
+        }
     }
 
     @objc private func dismissLoadError() {
@@ -258,8 +306,9 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     private func handleLoadFailure(_ navigation: WKNavigation?, error: Error) {
         let error = error as NSError
         // This check comes before any UI or retry work, including during navigation replacement.
-        if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled { return }
+        if NavigationRecovery.isNavigationInterruption(error) { return }
         guard !transitionPending, let navigation, navigation === activeNavigation else { return }
+        navigationLog.error("Page navigation failed: \(error.domain, privacy: .public) \(error.code)")
         let generation = recovery.generation
         let request = currentRequest
         switch recovery.fail(error, generation: generation, method: request?.httpMethod ?? "GET") {
@@ -368,30 +417,24 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
             return
         }
 
-        if navigationAction.targetFrame == nil {
-            if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
-                decisionHandler(.cancel)
-                startLoad(navigationAction.request)
-                return
-            }
-        }
-
-        guard let scheme = url.scheme?.lowercased() else {
-            decisionHandler(.allow)
+        if NavigationRouting.destination(for: url) == .external {
+            decisionHandler(.cancel)
+            openExternal(url)
             return
         }
 
-        if scheme == "http" || scheme == "https" || scheme == "about" || scheme == "data" || scheme == "blob" {
-            if navigationAction.targetFrame?.isMainFrame == true {
-                retryWork?.cancel()
-                retryWork = nil
-                pendingMainRequest = navigationAction.request
-            }
-            decisionHandler(.allow)
-        } else {
-            openExternal(url)
-            decisionHandler(.cancel)
+        // Preserve script URLs, iframe targets, referrers, POST bodies and browser window semantics.
+        // WebKit will ask createWebViewWith for target=_blank / window.open; do not cancel/reissue here.
+        if navigationAction.targetFrame?.isMainFrame == true && NavigationRouting.isPageRequest(url) {
+            retryWork?.cancel()
+            retryWork = nil
+            failureBar?.isHidden = true
+            failedRequest = nil
+            // A redirect can also invoke this policy callback for the same WKNavigation.
+            // Change navigation identity only in didStart, not while approving a redirect/hash link.
+            pendingMainRequest = navigationAction.request
         }
+        decisionHandler(.allow)
     }
 
     // MARK: WKUIDelegate
@@ -402,8 +445,22 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        // New-window links are handled once in decidePolicyFor; do not issue a second load.
-        return nil
+        guard navigationAction.targetFrame == nil, presentedViewController == nil, popupDepth < 3 else { return nil }
+        let child = ViewController(configuration: configuration, popupDepth: popupDepth + 1)
+        child.modalPresentationStyle = .fullScreen
+        child.loadViewIfNeeded()
+        // Return the web view created from the exact WebKit-supplied configuration. WebKit loads it once.
+        present(child, animated: true)
+        return child.webView
+    }
+
+    func webViewDidClose(_ webView: WKWebView) { closePopup() }
+
+    @objc private func closePopup() {
+        guard popupConfiguration != nil else { return }
+        audioCoordinator.invalidate()
+        webView.stopLoading()
+        dismiss(animated: true)
     }
 
     // MARK: WKScriptMessageHandler

@@ -23,10 +23,15 @@ struct NavigationRecovery {
         retryCount = 0
     }
 
+    static func isNavigationInterruption(_ error: NSError) -> Bool {
+        (error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled)
+            || (error.domain == "WebKitErrorDomain" && error.code == 102)
+    }
+
     mutating func fail(_ error: NSError, generation expected: Int, method: String) -> Action {
         guard expected == generation, !settled else { return .ignore }
         // A replaced navigation, stopLoading, or an external URL hand-off is not a network failure.
-        if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
+        if Self.isNavigationInterruption(error) {
             return .ignore
         }
         settled = true

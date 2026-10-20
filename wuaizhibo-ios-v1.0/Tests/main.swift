@@ -55,4 +55,16 @@ check(state.fail(error(NSURLErrorCancelled, domain: "DifferentErrorDomain"), gen
 state.begin()
 check(state.fail(error(NSURLErrorTimedOut), generation: state.generation, method: "HEAD") == .retry(after: 2),
       "HEAD requests can be retried safely")
+state.begin()
+check(state.fail(error(102, domain: "WebKitErrorDomain"), generation: state.generation, method: "GET") == .ignore,
+      "A WebKit policy hand-off must not report a network failure")
+check(state.retryCount == 0, "Policy interruption must not consume retry budget")
+check(state.fail(error(NSURLErrorTimedOut), generation: state.generation, method: "GET") == .retry(after: 2),
+      "A policy interruption must leave the replacement navigation able to recover")
+state.begin()
+check(state.fail(error(102, domain: "WKErrorDomain"), generation: state.generation, method: "GET") == .showFailure,
+      "Only the legacy WebKit policy error domain is ignored")
+state.begin()
+check(state.fail(error(101, domain: "WebKitErrorDomain"), generation: state.generation, method: "GET") == .showFailure,
+      "Other WebKit failures must remain visible")
 print("Navigation recovery: \(checks) checks passed")

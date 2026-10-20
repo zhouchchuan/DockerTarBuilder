@@ -1,12 +1,12 @@
-name: Build WuAi iOS 1.0.3 Web Wrapper
+name: Build WuAi iOS 1.0.4 Web Wrapper
 on:
   push:
-    branches: [wuaizhibo-ios-v1.0.3-web]
+    branches: [wuaizhibo-ios-v1.0.4-web]
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: wuai-web-v103-${{ github.ref }}
+  group: wuai-web-v104-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   build:
@@ -27,12 +27,13 @@ jobs:
       - name: Upload IPA and verification
         uses: actions/upload-artifact@v4
         with:
-          name: wazb-iOS-v1.0.3-web
+          name: wazb-iOS-v1.0.4-web
           path: |
             wuaizhibo-ios-v1.0/build/*.ipa
             wuaizhibo-ios-v1.0/build/SHA256.txt
             wuaizhibo-ios-v1.0/build/toolchain.txt
             wuaizhibo-ios-v1.0/build/recovery-tests.txt
+            wuaizhibo-ios-v1.0/build/browser-tests.log
             wuaizhibo-ios-v1.0/build/audio-tests.txt
             wuaizhibo-ios-v1.0/build/audio-bridge-tests.txt
             wuaizhibo-ios-v1.0/build/source-commit.txt
